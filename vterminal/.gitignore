@@ -1,0 +1,16 @@
+# build output
+/bin/
+/vagent
+/vagent.exe
+*.o
+*.tmp.c
+
+# local runtime state
+.vagent/sessions/
+.vagent/logs/
+.vagent/cache/
+*.log
+
+# secrets — never commit a real config with an api_key in it
+config.local.json
+.env
