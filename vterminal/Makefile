@@ -8,7 +8,7 @@ V ?= v
 BIN := bin/vagent
 SRC := cmd/vagent.v
 
-.PHONY: all build run test fmt vet check clean install cross
+.PHONY: all build bundled run test fmt vet check clean install cross
 
 all: build
 
@@ -16,6 +16,27 @@ build:
 	@mkdir -p bin
 	$(V) -o $(BIN) $(SRC)
 	@echo "built $(BIN)"
+
+# bundled compiles the endpoint and key into the binary, so it runs with nothing
+# exported. The values come from this shell's environment and never touch the
+# source tree or the Makefile.
+#
+#   VAGENT_API_KEY=sk-... VAGENT_BASE_URL=https://.../v1 VAGENT_MODEL=m make bundled
+#
+# The result contains your key in plain text -- `strings` recovers it. Treat the
+# binary as the credential: do not commit it, do not share it.
+bundled:
+	@test -n "$$VAGENT_API_KEY" || { echo "VAGENT_API_KEY is not set"; exit 1; }
+	@test -n "$$VAGENT_BASE_URL" || { echo "VAGENT_BASE_URL is not set"; exit 1; }
+	@test -n "$$VAGENT_MODEL" || { echo "VAGENT_MODEL is not set"; exit 1; }
+	@mkdir -p bin
+	$(V) -prod \
+		-d vagent_api_key="$$VAGENT_API_KEY" \
+		-d vagent_base_url="$$VAGENT_BASE_URL" \
+		-d vagent_model="$$VAGENT_MODEL" \
+		-d vagent_provider_kind="$${VAGENT_PROVIDER_KIND:-openai}" \
+		-o $(BIN) $(SRC)
+	@echo "built $(BIN) with credentials compiled in -- do not share this file"
 
 # -prod turns on optimisation; it is noticeably slower to compile.
 release:

@@ -20,7 +20,12 @@ fn main() {
 		return
 	}
 	if args.show_ver {
-		println('vagent ${app.version}')
+		b := config.baked()
+		if b.present() {
+			println('vagent ${app.version} (bundled: ${b.describe()})')
+		} else {
+			println('vagent ${app.version}')
+		}
 		return
 	}
 	if args.do_init {

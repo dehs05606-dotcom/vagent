@@ -92,7 +92,7 @@ pub fn (c &Config) validate() ! {
 		return error('provider.model is not set')
 	}
 	if c.provider.api_key.trim_space() == '' {
-		return error('no API key: set \$${c.provider.api_key_env} or provider.api_key in config.json')
+		return error('no API key: set \$${c.provider.api_key_env}, put provider.api_key in config.json, or build a bundled binary with `make bundled`')
 	}
 	if c.provider.kind !in ['openai', 'anthropic'] {
 		return error('provider.kind must be "openai" or "anthropic", got "${c.provider.kind}"')

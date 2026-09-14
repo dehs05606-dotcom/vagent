@@ -88,10 +88,39 @@ bin/vagent --init          # writes ./.vagent/config.json
 Configuration is layered, later layers winning:
 
 ```
-defaults → ~/.vagent/config.json → ./.vagent/config.json → --config → env → flags
+defaults → built-in → ~/.vagent/config.json → ./.vagent/config.json → --config → env → flags
 ```
 
-`/status` shows which layers actually contributed, and prints the key redacted.
+`/status` shows which layers actually contributed, prints the key redacted, and
+says where that key came from.
+
+### A binary that needs no setup
+
+`make bundled` compiles the endpoint and key into the executable, so it runs
+with nothing exported — useful for dropping onto a box, or for handing to
+yourself on another machine:
+
+```sh
+VAGENT_API_KEY=sk-... \
+VAGENT_BASE_URL=https://router.kiosapi.com/v1 \
+VAGENT_MODEL=oc/muse-spark-1.3-contributor \
+make bundled
+
+./bin/vagent --version
+# vagent 0.1.0 (bundled: oc/muse-spark-1.3-contributor @ https://router.kiosapi.com/v1, key included)
+```
+
+The values are read from the build environment and passed as V compile-time
+defines — they never enter the source tree, so a key cannot be committed by
+accident, and `bin/` is gitignored.
+
+A bundled binary still respects `$VAGENT_API_KEY`, a config file and the flags,
+so it stays usable against a different endpoint.
+
+> **This is convenience, not secrecy.** A string compiled into an executable is
+> recoverable with `strings`. Treat a bundled binary as the credential itself:
+> do not commit it, do not share it, and rotate the key if it leaves your
+> machine.
 
 ## Use
 

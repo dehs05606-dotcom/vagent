@@ -163,3 +163,50 @@ fn test_example_config_is_valid_json_and_loads() {
 		assert err.msg().contains('already exists')
 	}
 }
+
+fn test_baked_credentials_are_absent_from_an_ordinary_build() {
+	// This binary is built without -d defines, so nothing may be compiled in.
+	// If this ever fails, a key leaked into the source tree.
+	b := config.baked()
+	assert !b.present()
+	assert b.api_key == ''
+	assert b.base_url == ''
+	assert b.model == ''
+	assert b.describe() == ''
+}
+
+fn test_baked_describe_never_includes_the_key() {
+	b := config.Baked{
+		api_key:  'sk-secret-value'
+		base_url: 'https://x.test/v1'
+		model:    'm1'
+	}
+	out := b.describe()
+	assert b.present()
+	assert out.contains('m1')
+	assert out.contains('https://x.test/v1')
+	assert out.contains('key included')
+	assert !out.contains('sk-secret-value')
+}
+
+fn test_environment_overrides_a_bundled_endpoint() {
+	// A bundled binary must stay usable against a different endpoint, so the
+	// built-in layer sits below the environment rather than above it.
+	dir := tmpdir('overrides')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	path := os.join_path(dir, 'c.json')
+	os.write_file(path, '{"provider":{"base_url":"https://file.test/v1","model":"from-file"}}') or {
+		panic(err)
+	}
+	os.setenv('VAGENT_API_KEY', 'env-key', true)
+	os.setenv('VAGENT_MODEL', 'from-env', true)
+	defer {
+		os.unsetenv('VAGENT_MODEL')
+	}
+	cfg := config.load(path, map[string]string{}) or { panic(err) }
+	assert cfg.provider.model == 'from-env'
+	assert cfg.provider.api_key == 'env-key'
+	assert cfg.provider.base_url == 'https://file.test/v1'
+}

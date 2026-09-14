@@ -14,6 +14,14 @@ pub fn load(explicit_path string, flag_overrides map[string]string) !Config {
 	mut c := default_config()
 	c.sources << 'defaults'
 
+	// Values compiled into this binary sit just above the defaults, so a file,
+	// an environment variable or a flag still overrides them.
+	b := baked()
+	if b.present() {
+		apply_baked(mut c, b)
+		c.sources << 'built-in'
+	}
+
 	global := os.join_path(utils.user_config_dir(), 'config.json')
 	if os.exists(global) {
 		apply_file(mut c, global)!
@@ -39,6 +47,21 @@ pub fn load(explicit_path string, flag_overrides map[string]string) !Config {
 	apply_flags(mut c, flag_overrides)
 	resolve_api_key(mut c)
 	return c
+}
+
+fn apply_baked(mut c Config, b Baked) {
+	if b.base_url != '' {
+		c.provider.base_url = b.base_url
+	}
+	if b.model != '' {
+		c.provider.model = b.model
+	}
+	if b.kind != '' {
+		c.provider.kind = b.kind
+	}
+	if b.api_key != '' {
+		c.provider.api_key = b.api_key
+	}
 }
 
 fn apply_file(mut c Config, path string) ! {

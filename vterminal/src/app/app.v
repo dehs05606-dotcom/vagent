@@ -244,7 +244,7 @@ fn (mut a App) cmd_status() {
 	})
 	s := a.ui.style
 	a.ui.raw('  ${s.grey('provider')}    ${a.cfg.provider.name} (${a.cfg.provider.kind}) ${a.cfg.provider.base_url}')
-	a.ui.raw('  ${s.grey('api key')}     ${a.cfg.redacted_api_key()}')
+	a.ui.raw('  ${s.grey('api key')}     ${a.cfg.redacted_api_key()}${key_origin(a.cfg)}')
 	a.ui.raw('  ${s.grey('streaming')}   ${a.cfg.provider.streaming}')
 	a.ui.raw('  ${s.grey('permissions')} mode=${a.cfg.permissions.mode} confined=${a.cfg.permissions.confine_to_root}')
 	grants := a.perms.granted_this_session()
@@ -254,6 +254,22 @@ fn (mut a App) cmd_status() {
 	a.ui.raw('  ${s.grey('usage')}       ${a.gateway.total.prompt_tokens} in / ${a.gateway.total.completion_tokens} out over ${a.gateway.requests} request(s)')
 	a.ui.raw('  ${s.grey('session')}     ${a.session.path()}')
 	a.ui.raw('  ${s.grey('config')}      ${a.cfg.sources.join(' <- ')}')
+}
+
+// key_origin tells the user where the key in use came from, which matters most
+// for a bundled binary: otherwise a working agent with nothing exported looks
+// like magic.
+fn key_origin(cfg config.Config) string {
+	if cfg.provider.api_key == '' {
+		return ''
+	}
+	if os.getenv(cfg.provider.api_key_env) != '' {
+		return ' (from \$${cfg.provider.api_key_env})'
+	}
+	if config.baked().api_key == cfg.provider.api_key {
+		return ' (compiled into this binary)'
+	}
+	return ' (from a config file)'
 }
 
 fn (mut a App) cmd_model(args string) ! {

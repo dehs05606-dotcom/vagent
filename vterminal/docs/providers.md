@@ -36,8 +36,43 @@ known dialect, plus a model name".
 | `input_price`/`output_price` | per 1M tokens, for the cost readout only |
 
 The key is resolved from `$api_key_env`, then `$OPENAI_API_KEY`, then the
-config file — so a key never has to be written to disk, and `/status` always
-prints it redacted.
+config file, then whatever was compiled into the binary — so a key never has to
+be written to disk, and `/status` always prints it redacted and names where it
+came from.
+
+## Compiling credentials into the binary
+
+`make bundled` passes the endpoint and key to the compiler as V defines:
+
+```sh
+VAGENT_API_KEY=sk-... VAGENT_BASE_URL=https://.../v1 VAGENT_MODEL=m make bundled
+```
+
+which is shorthand for:
+
+```sh
+v -prod -d vagent_api_key='sk-...' \
+        -d vagent_base_url='https://.../v1' \
+        -d vagent_model='m' \
+        -o bin/vagent cmd/vagent.v
+```
+
+`src/config/baked.v` reads them with `$d()`, so nothing is ever written into
+the source tree. The built-in values sit one layer above the defaults and below
+everything else, which keeps a bundled binary overridable:
+
+```
+defaults → built-in → global file → project file → --config → env → flags
+```
+
+`--version` reports what a bundled build carries, minus the key:
+
+```
+vagent 0.1.0 (bundled: some-model @ https://router.example.com/v1, key included)
+```
+
+A compiled-in string is recoverable with `strings`. This buys convenience, not
+secrecy — a bundled binary is the credential.
 
 ## Known-good endpoints
 
