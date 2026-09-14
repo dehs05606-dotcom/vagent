@@ -26,10 +26,13 @@ pub mut:
 	cfg       config.AgentConfig
 	perm_mode string
 mut:
-	gateway  &model.Gateway  = unsafe { nil }
-	registry &tools.Registry = unsafe { nil }
-	ui       &tui.Renderer   = unsafe { nil }
-	log      &utils.Logger   = unsafe { nil }
+	// last_plan is the fingerprint of the plan as last drawn, so an unchanged
+	// plan is never redrawn.
+	last_plan string
+	gateway   &model.Gateway  = unsafe { nil }
+	registry  &tools.Registry = unsafe { nil }
+	ui        &tui.Renderer   = unsafe { nil }
+	log       &utils.Logger   = unsafe { nil }
 }
 
 pub struct AgentOpts {
@@ -99,7 +102,7 @@ pub fn (mut a Agent) run_turn(input string) ! {
 	a.refresh_system()
 	a.state.push(model.user_msg(input))
 
-	plan_before := a.plan().len
+	plan_at_start := plan_fingerprint(a.plan())
 	mut iterations := 0
 	for {
 		if iterations >= a.cfg.max_iterations {
@@ -123,7 +126,11 @@ pub fn (mut a Agent) run_turn(input string) ! {
 	}
 
 	a.ui.end_turn()
-	if a.plan().len > 0 && a.plan().len != plan_before {
+	// Close the turn by showing the final plan, but only if it moved and the
+	// last tool call did not already draw this exact state.
+	final_plan := plan_fingerprint(a.plan())
+	if a.plan().len > 0 && final_plan != plan_at_start && final_plan != a.last_plan {
+		a.last_plan = final_plan
 		a.ui.plan(a.plan())
 	}
 	a.session.turns++
@@ -198,10 +205,22 @@ fn (mut a Agent) execute_calls(calls []model.ToolCall) {
 		}
 		a.state.push(model.tool_msg(call.id, call.name, payload))
 	}
-	// The plan lives in the tool context; re-render it as soon as it changes.
-	if a.plan().len > 0 {
+	// The plan lives in the tool context. Render it only when it actually
+	// changed: reprinting an identical plan after every tool call buries the
+	// work in repeated boilerplate.
+	fingerprint := plan_fingerprint(a.plan())
+	if fingerprint != a.last_plan && a.plan().len > 0 {
+		a.last_plan = fingerprint
 		a.ui.plan(a.plan())
 	}
+}
+
+fn plan_fingerprint(steps []tools.PlanStep) string {
+	mut parts := []string{cap: steps.len}
+	for s in steps {
+		parts << '${s.status}:${s.title}'
+	}
+	return parts.join('|')
 }
 
 fn (a &Agent) call_summary(call model.ToolCall) string {
@@ -261,6 +280,7 @@ pub fn (mut a Agent) compact_now() context.CompactionReport {
 // clear resets the conversation and the visible plan.
 pub fn (mut a Agent) clear() {
 	a.state.reset()
+	a.last_plan = ''
 	a.registry.ctx.plan = []
 	a.registry.ctx.read_files.clear()
 }

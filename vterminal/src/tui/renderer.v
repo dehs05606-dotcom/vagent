@@ -239,6 +239,10 @@ pub fn (mut r Renderer) ask_permission(req security.Request) security.Approval {
 	for {
 		r.out('    ${s.bold('choice')} ${s.grey('[y/a/n/q]')} ')
 		line := os.get_line().trim_space().to_lower()
+		// A terminal echoes the keystroke and its newline back; a pipe or a
+		// pty fed from a file does not, so emit one here or the next line of
+		// output lands on top of the prompt.
+		r.out('\n')
 		match line {
 			'y', 'yes', '' { return .once }
 			'a', 'always' { return .always }

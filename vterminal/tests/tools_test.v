@@ -192,3 +192,15 @@ fn test_delete_file_guards_directories_and_root() {
 	assert file.ok, file.error
 	assert !os.exists(os.join_path(root, 'sub', 'file.txt'))
 }
+
+fn test_update_plan_can_mark_every_step_done() {
+	root, mut reg := sandbox('plandone')
+	defer { cleanup(root) }
+	// `active` past the last step is how the model says the task is finished.
+	res := reg.execute('update_plan', '{"steps":["a","b"],"active":3}')
+	assert res.ok, res.error
+	assert res.summary.contains('all done')
+	for step in reg.ctx.plan {
+		assert step.status == 'done'
+	}
+}

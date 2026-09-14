@@ -356,7 +356,7 @@ pub struct UpdatePlanTool {}
 pub fn (t UpdatePlanTool) spec() Spec {
 	return Spec{
 		name:        'update_plan'
-		description: 'Record or update the step-by-step plan shown to the user. Call it once when you start a multi-step task and again whenever a step completes. Keep steps short and in execution order.'
+		description: 'Record or update the step-by-step plan shown to the user. Call it once when you start a multi-step task and again whenever a step completes. Keep steps short and in execution order. When the whole task is finished, call it one last time with active set past the last step so every step shows as done.'
 		level:       .read
 		params:      [
 			Param{
@@ -369,7 +369,7 @@ pub fn (t UpdatePlanTool) spec() Spec {
 			Param{
 				name:        'active'
 				typ:         'integer'
-				description: '1-based index of the step currently in progress. Steps before it are marked done.'
+				description: '1-based index of the step currently in progress; steps before it are marked done. Pass a value greater than the number of steps to mark them all done.'
 			},
 		]
 	}
@@ -400,7 +400,8 @@ pub fn (t UpdatePlanTool) execute(mut ctx Context, args map[string]json2.Any) Re
 	for i, s in steps {
 		sb.write_string('${i + 1}. [${s.status}] ${s.title}\n')
 	}
-	return ok_result('plan updated:\n${sb.str()}', '${steps.len} steps, on step ${active}')
+	position := if active > steps.len { 'all done' } else { 'on step ${active}' }
+	return ok_result('plan updated:\n${sb.str()}', '${steps.len} steps, ${position}')
 }
 
 // permission_level_of is used by /tools to show what each tool can do.
