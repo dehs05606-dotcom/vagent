@@ -13,10 +13,17 @@ private def promptForTask (color : Bool) : IO (Option String) := do
   let stdin ← IO.getStdin
   if !(← stdin.isTty) then return none
   let out ← IO.getStdout
-  out.putStrLn (Ansi.style color Ansi.bold "lean-prime")
-  out.putStrLn (Ansi.style color Ansi.grey
-    "describe the task, or press enter to exit")
-  out.putStr "› "
+  let width ← terminalWidth
+  out.putStrLn ""
+  for row in wordmarkFor width do
+    out.putStrLn (centerStyled width (Ansi.style color Ansi.cyan row))
+  out.putStrLn ""
+  out.putStrLn (centerStyled width (Ansi.style color Ansi.grey s!"v{versionString}"))
+  out.putStrLn ""
+  out.putStrLn (centerStyled width (Ansi.style color Ansi.grey
+    "describe the task, or press enter to exit"))
+  out.putStrLn ""
+  out.putStr (Ansi.style color Ansi.cyan "› ")
   out.flush
   let line ← stdin.getLine
   let t := trim line
@@ -36,6 +43,13 @@ private def executeTask (cfg : Config) (opts : CliOptions) (task : String)
   let prompts ← match ← buildPrompts cfg registry task with
     | .error e => (← IO.getStderr).putStrLn (LPError.render e); return 2
     | .ok p => pure p
+  -- The opening screen, before any event is emitted.  Interactive TUI only:
+  -- `--plain`, `--json` and a redirected stdout must stay byte-clean.
+  let stdoutTty ← (← IO.getStdout).isTty
+  if cfg.output == .tui && stdoutTty && !opts.quiet then
+    let width ← terminalWidth
+    printBanner (bannerInfoOf cfg registry prompts opts.configPath)
+      width (cfg.ui.color && stdoutTty) task
   let events ← buildSink cfg opts interactive prompts
   let env ← buildRunEnv cfg apiKey events prompts interactive
   let env := if priorTurns.isEmpty then env
@@ -62,6 +76,7 @@ def main (argv : List String) : IO UInt32 := do
     match opts.command with
     | .help => IO.println usage; return 0
     | .version => IO.println versionString; return 0
+    | .listModels => IO.println renderCatalog; return 0
     | _ =>
     match ← buildConfig opts with
     | .error e =>
@@ -108,7 +123,7 @@ def main (argv : List String) : IO UInt32 := do
           IO.println stack.render
           return 0
       match opts.command with
-      | .help | .version => return 0
+      | .help | .version | .listModels => return 0
       | .doctor =>
         let checks ← runChecks cfg cfgPath
         report checks color

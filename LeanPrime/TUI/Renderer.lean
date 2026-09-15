@@ -12,6 +12,7 @@
 import LeanPrime.Agent.Events
 import LeanPrime.TUI.Ansi
 import LeanPrime.TUI.StatusBar
+import LeanPrime.Model.Catalog
 
 namespace LeanPrime
 
@@ -45,10 +46,14 @@ def mkRenderer (color : Bool) (ui : UiConfig) (modelName : String)
     emit := fun e => do
       match e with
       | .sessionStarted _ task model =>
-        line (style c bold "lean-prime" ++ style c grey s!"  {model}")
-        line (style c grey "─────────────────────────────────────────────────────────────")
-        line (style c bold "› " ++ task)
-        line ""
+        -- The banner has already shown the wordmark, model and task in the
+        -- interactive TUI.  Under --plain and --json this is the only place
+        -- they appear, so it still has to say them.
+        if ui.compact then pure ()
+        else
+          line (style c grey s!"session · {shortModelName model}")
+          line (style c bold "› " ++ truncate task 120)
+          line ""
       | .projectDetected kind git files =>
         line (style c grey s!"  {kind} project · {files} files · git: {if git then "yes" else "no"}")
       | .phaseChanged _ to =>

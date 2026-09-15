@@ -29,10 +29,126 @@ import LeanPrime.Prompt.Predicate
 import LeanPrime.Prompt.Compiler
 import LeanPrime.Agent.Interlock
 import LeanPrime.Agent.Loop
+import LeanPrime.Model.Catalog
+import LeanPrime.TUI.Banner
 
 open LeanPrime Tests Lean
 
 namespace Tests
+
+/-- The model catalog and the opening screen. -/
+def runPresentation (r : Runner) : IO Unit := do
+  section_ "model catalog"
+  checkEq r "the catalog has five models" kiosCatalog.length 5
+  check r "muse 1.3 is present" (knownModel "oc/muse-spark-1.3-contributor")
+  check r "muse 1.2 is present" (knownModel "oc/muse-spark-1.2-contributor")
+  check r "atria dawn is present" (knownModel "atria-asi/atria-dawn-preview")
+  check r "deepseek v4 is present" (knownModel "deepseek-v4-flash-vision-exp-free")
+  check r "ling 3.0 is present" (knownModel "ling-3.0-flash-fin")
+  check r "an unlisted id is not known" (!knownModel "some/other-model")
+  check r "aliases are unique"
+    ((kiosCatalog.map (·.alias_)).eraseDups.length == kiosCatalog.length)
+  check r "ids are unique"
+    ((kiosCatalog.map (·.id)).eraseDups.length == kiosCatalog.length)
+
+  section_ "model resolution"
+  checkEq r "an alias resolves to the wire id"
+    (resolveModel "muse-1.3") "oc/muse-spark-1.3-contributor"
+  checkEq r "the full id resolves to itself"
+    (resolveModel "ling-3.0-flash-fin") "ling-3.0-flash-fin"
+  checkEq r "resolution ignores case"
+    (resolveModel "ATRIA-DAWN") "atria-asi/atria-dawn-preview"
+  checkEq r "a unique prefix resolves"
+    (resolveModel "deepseek") "deepseek-v4-flash-vision-exp-free"
+  -- The catalog is a convenience, not a whitelist: a router that gains a
+  -- model tomorrow must still be reachable today.
+  checkEq r "an unknown id passes through unchanged"
+    (resolveModel "vendor/brand-new-model") "vendor/brand-new-model"
+  checkEq r "surrounding space is trimmed"
+    (resolveModel "  muse-1.2  ") "oc/muse-spark-1.2-contributor"
+  -- "muse-1." is a prefix of two aliases, so it must not silently pick one.
+  checkEq r "an ambiguous prefix is not guessed at"
+    (resolveModel "muse-1.") "muse-1."
+
+  section_ "model display"
+  checkEq r "a known model shows its alias"
+    (shortModelName "oc/muse-spark-1.3-contributor") "muse-1.3"
+  checkEq r "an unknown model drops its vendor prefix"
+    (shortModelName "vendor/some-model") "some-model"
+  checkEq r "an unprefixed unknown model is shown whole"
+    (shortModelName "bare-model") "bare-model"
+  check r "the vision model is tagged"
+    ((kiosCatalog.find? (·.alias_ == "deepseek-v4")).any (·.tags.contains "vision"))
+  check r "the free model is tagged"
+    ((kiosCatalog.find? (·.alias_ == "deepseek-v4")).any (·.tags.contains "free"))
+  check r "a plain model has no tags"
+    ((kiosCatalog.find? (·.alias_ == "muse-1.3")).all (·.tags.isEmpty))
+  check r "the catalog renders every model"
+    (kiosCatalog.all fun m => containsSubstr renderCatalog m.id)
+
+  section_ "banner layout"
+  let bInfo : BannerInfo := {
+    version := "0.1.0", model := "oc/muse-spark-1.3-contributor"
+    approval := .auto, execution := .governed
+    toolCount := 12, directives := 8, textRules := 0
+    behaviorRules := 5, blockingRules := 1
+    promptOrigin := "SystemPrompt.lean", configPath := none }
+  let banner := renderBanner bInfo 80 false "Review this code"
+  check r "the banner draws the wordmark"
+    (banner.any (fun l => containsSubstr l "█"))
+  check r "the banner shows the version"
+    (banner.any (fun l => containsSubstr l "v0.1.0"))
+  check r "the banner shows the short model name"
+    (banner.any (fun l => containsSubstr l "muse-1.3"))
+  check r "the banner frames the task"
+    (banner.any (fun l => containsSubstr l "Review this code"))
+  check r "the banner shows the prompt origin"
+    (banner.any (fun l => containsSubstr l "SystemPrompt.lean"))
+  -- Nothing may exceed the terminal width, or the block wraps and tears.
+  check r "no banner line overflows the width"
+    (banner.all (fun l => visibleLength l <= 80))
+
+  section_ "banner honesty"
+  -- A banner that implies more enforcement than exists is the worst place
+  -- to be reassuring, so an unenforced prompt must say so.
+  let bare : BannerInfo := { bInfo with
+    directives := 0, textRules := 0, behaviorRules := 0, blockingRules := 0 }
+  check r "a prompt with no rules says so"
+    ((renderBanner bare 80 false "t").any (fun l => containsSubstr l "no rules extracted"))
+  check r "zero enforcement is marked with a cross"
+    (containsSubstr (bare.capabilityLine true) Ansi.red)
+  check r "real enforcement is marked with a tick"
+    (containsSubstr (bInfo.capabilityLine true) Ansi.green)
+
+  section_ "autonomy statement"
+  checkEq r "auto explains what runs"
+    ({ bInfo with approval := .auto }).autonomyLine "Auto · safe actions run, the rest ask"
+  check r "ask says every side effect needs approval"
+    (containsSubstr ({ bInfo with approval := .ask }).autonomyLine "approval")
+  check r "read-only says nothing changes"
+    (containsSubstr ({ bInfo with approval := .readOnly }).autonomyLine "Read-only")
+  -- Unrestricted must be unmistakable regardless of the approval mode.
+  check r "unrestricted overrides the approval mode"
+    (containsSubstr
+      ({ bInfo with execution := .unrestricted, approval := .readOnly }).autonomyLine
+      "Unrestricted")
+
+  section_ "banner width adaptation"
+  check r "a wide terminal gets the block wordmark"
+    ((wordmarkFor 80).length == 5)
+  check r "a narrow terminal gets the plain name"
+    ((wordmarkFor 40).length == 1)
+  check r "the narrow banner still fits"
+    ((renderBanner bInfo 40 false "t").all (fun l => visibleLength l <= 40))
+
+  section_ "ansi-aware measurement"
+  checkEq r "plain text measures as written" (visibleLength "abc") 3
+  checkEq r "escape codes do not count"
+    (visibleLength (Ansi.style true Ansi.red "abc")) 3
+  checkEq r "an empty string measures zero" (visibleLength "") 0
+  check r "styled text centres like plain text"
+    (visibleLength (centerStyled 20 (Ansi.style true Ansi.red "abc"))
+      == visibleLength (center 20 "abc"))
 
 /-- Behavioural enforcement: the action trace, the predicate engine, the
     directive compiler and the interlock. -/
@@ -891,5 +1007,6 @@ def runUnit (r : Runner) : IO Unit := do
     (containsSubstr (rewriteRequest review) "missing the required header")
 
   runBehavior r
+  runPresentation r
 
 end Tests

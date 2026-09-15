@@ -9,6 +9,7 @@ import LeanPrime.App.Doctor
 import LeanPrime.Agent.Loop
 import LeanPrime.Memory.Session
 import LeanPrime.TUI.Renderer
+import LeanPrime.TUI.Banner
 import LeanPrime.Model.OpenAI
 
 namespace LeanPrime
@@ -30,6 +31,24 @@ def shortOrigin : PromptOrigin → String
   | .installFile _ => "SystemPrompt.lean"
   | .compiledIn => "SystemPrompt.lean (built in)"
 
+/-- Gather what the opening screen reports.  Every field is read from the
+    resolved configuration, so the banner cannot claim enforcement that is
+    not actually in force. -/
+def bannerInfoOf (cfg : Config) (registry : Registry) (prompts : PromptStack)
+    (cfgPath : Option System.FilePath) : BannerInfo :=
+  let report := compileReport prompts.directives
+  { version := versionString
+    model := cfg.provider.model
+    approval := cfg.approval
+    execution := cfg.execution
+    toolCount := registry.tools.length
+    directives := prompts.directives.length
+    textRules := prompts.rules.length
+    behaviorRules := report.rules.length
+    blockingRules := report.blockingCount
+    promptOrigin := shortOrigin prompts.origin
+    configPath := cfgPath.map (fun p => p.toString) }
+
 /-- Choose the event sink for the requested output mode.
 
     The two-line status block is drawn only for the interactive `tui` mode:
@@ -43,6 +62,7 @@ def buildSink (cfg : Config) (opts : CliOptions) (interactive : Bool)
     custodyFingerprint :=
       if cfg.prompt.vaultCustody then (Digests.of prompts.render).short else ""
     behaviorRules := (compileBehaviorRules prompts.directives).length
+    model := shortModelName cfg.provider.model
     mode := cfg.execution.toString }
   if opts.quiet then mkQuietSink
   else match cfg.output with

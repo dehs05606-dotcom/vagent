@@ -6,6 +6,7 @@
 -/
 import LeanPrime.Config.Loader
 import LeanPrime.Util.Errors
+import LeanPrime.Model.Catalog
 
 namespace LeanPrime
 
@@ -15,6 +16,7 @@ inductive Command where
   | doctor
   | listSessions
   | resume (id : String)
+  | listModels
   | version
   | help
   deriving Repr, Inhabited
@@ -90,6 +92,7 @@ def usage : String :=
   , "  --quiet                 suppress the transcript; errors still go to stderr"
   , "  --resume <session>      continue a stored session"
   , "  --sessions              list stored sessions"
+  , "  --list-models           list the models available on the router"
   , "  --doctor                check the environment and configuration"
   , "  --version               print the version"
   , "  -h, --help              this message"
@@ -131,6 +134,7 @@ where
       | "--version" => .ok { opts with command := .version }
       | "--doctor" => go more { opts with command := .doctor } positional
       | "--sessions" => go more { opts with command := .listSessions } positional
+      | "--list-models" => .ok { opts with command := .listModels }
       | "--json" => go more { opts with output := some .json } positional
       | "--plain" => go more { opts with output := some .plain, noColor := true } positional
       | "--no-color" => go more { opts with noColor := true } positional
@@ -174,8 +178,11 @@ where
 
 /-- Apply flags on top of a config already built from file and environment. -/
 def applyCli (cfg : Config) (o : CliOptions) : Config :=
+  -- `--model` accepts a catalog alias or a unique prefix; anything else is
+  -- passed to the router as written.
   let cfg := match o.model with
-    | some m => { cfg with provider := { cfg.provider with model := m } } | none => cfg
+    | some m => { cfg with provider := { cfg.provider with model := resolveModel m } }
+    | none => cfg
   let cfg := match o.baseUrl with
     | some u => { cfg with provider := { cfg.provider with baseUrl := u } } | none => cfg
   let cfg := match o.approval with | some m => { cfg with approval := m } | none => cfg

@@ -40,6 +40,8 @@ structure StatusModel where
   directives  : Nat := 0
   enforced    : Nat := 0
   mode        : String := "governed"
+  /-- Short model name, as shown on the banner's status row. -/
+  model       : String := ""
   /-- Set while a reply is being re-requested for breaking a rule. -/
   complianceRetry : Option Nat := none
   /-- Cumulative compliance pass/fail for the status line. -/
@@ -127,9 +129,10 @@ def StatusModel.lines (m : StatusModel) (width : Nat) : String × String :=
     if m.custodyFingerprint.isEmpty then ""
     else if m.custodyIntact then s!"⛨{m.custodyFingerprint} "
     else "⛨BROKEN "
+  let modelPart := if m.model.isEmpty then "" else s!"{m.model} · "
   let right :=
-    if m.sentinelState.isEmpty then s!"{custody}{m.mode}"
-    else s!"{custody}{m.sentinelState} · {m.mode}"
+    if m.sentinelState.isEmpty then s!"{custody}{modelPart}{m.mode}"
+    else s!"{custody}{m.sentinelState} · {modelPart}{m.mode}"
   let second := layoutLine width
     s!"{m.promptOrigin} · {ruleText}{compText}"
     right

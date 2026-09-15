@@ -118,9 +118,30 @@ lean-prime --json "run the tests and report the result"     # one JSON event per
 lean-prime --doctor
 lean-prime --sessions
 lean-prime --resume <session>
+lean-prime --list-models
 ```
 
 Run `lean-prime --help` for every flag.
+
+### Models
+
+`--list-models` prints what the configured router offers. Each has a short
+alias, so `--model muse-1.2` is enough — the full id, a unique prefix, or an
+id not in the list all work too, since the catalog is a convenience rather
+than a whitelist.
+
+| alias | id | |
+|---|---|---|
+| `muse-1.3` | `oc/muse-spark-1.3-contributor` | default |
+| `muse-1.2` | `oc/muse-spark-1.2-contributor` | |
+| `atria-dawn` | `atria-asi/atria-dawn-preview` | preview |
+| `deepseek-v4` | `deepseek-v4-flash-vision-exp-free` | vision, free, preview |
+| `ling-3.0` | `ling-3.0-flash-fin` | |
+
+Context and output limits differ per model and are not recorded here, because
+this project has no authoritative source for them and a wrong figure would
+read as a guarantee. If a run fails with a length or limit error, lower
+`max_tokens`.
 
 ### Your system prompt
 
