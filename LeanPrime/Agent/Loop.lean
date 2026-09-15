@@ -141,6 +141,7 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
 
   let rules := env.prompts.rules
   let retryLimit := env.config.prompt.maxComplianceRetries
+  let promptHash := PromptIntegrity.compute env.prompts.render
 
   -- Phase: understanding -> inspecting -> context
   let mut st : AgentState :=
@@ -210,6 +211,23 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
       st := st.addMessage
         { Message.user (reminderMessage env.prompts.directives) with pinned := false }
 
+    -- Prompt integrity gate: verify the system prompt message has not been
+    -- altered since the run started.  Any mutation — accidental or injected —
+    -- is a hard stop: continuing with a different instruction set defeats
+    -- the purpose of having one.
+    match st.messages.head? with
+    | some sysMsg =>
+      let sysText := sysMsg.plainText
+      if !promptHash.verify sysText then
+        env.events.emit (.integrityChecked false
+          "system prompt message was altered mid-run")
+        env.events.emit (.errorOccurred (err .internal
+          "prompt integrity failure: the system prompt message in the conversation \
+           no longer matches the original; aborting"))
+        st ← advance env st .fatalError
+        break
+    | none => pure ()
+
     -- model call
     st ← advance env st .modelRequested
     if st.phase.isTerminal then break
@@ -237,36 +255,39 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
       st := { st with budget := { st.budget with usage := st.budget.usage + resp.usage } }
       env.events.emit (.modelFinished resp.finishReason.toString resp.usage)
 
-      -- Mechanical compliance gate.
+      -- Mechanical compliance gate with cascading enforcement.
       --
       -- This is the part that does not rely on the model agreeing. A reply
       -- that breaks a checkable rule from SystemPrompt.lean is rejected here
       -- and never enters the conversation as an assistant turn: the model is
       -- handed the exact rule and the exact text it produced, and asked
-      -- again. Only replies the model is actually finishing on are checked —
-      -- a turn that is calling tools has not written its answer yet.
+      -- again with escalating severity.
+      --
+      -- Escalation: gentle (attempt 1) → firm (attempt 2) → explicit (attempt 3) → abort.
       if !rules.isEmpty && resp.toolCalls.isEmpty && !resp.content.isEmpty then
         let violations := checkCompliance rules resp.content
         if !violations.isEmpty then
+          st := { st with complianceFailures := st.complianceFailures + 1 }
           if st.complianceRetries >= retryLimit then
-            -- Out of attempts. Report the violation rather than passing off a
-            -- non-compliant answer as a good one.
             env.events.emit (.errorOccurred (err .verification
               s!"the reply still breaks {violations.length} rule(s) after \
-                 {retryLimit} attempt(s)"
+                 {retryLimit} attempt(s) with escalating correction"
               (some (violationSummary violations))
               (some "check that the rule in SystemPrompt.lean is satisfiable")))
             st ← advance env st .fatalError
             break
           st := { st with complianceRetries := st.complianceRetries + 1 }
+          let level := correctionLevelOf st.complianceRetries
           env.events.emit (.complianceRejected st.complianceRetries
             (violationSummary violations))
           st := st.addMessage
-            { Message.user (correctionMessage violations) with pinned := false }
+            { Message.user (cascadingCorrection violations level) with pinned := false }
           continue
-        else if st.complianceRetries > 0 then
-          env.events.emit (.complianceAccepted st.complianceRetries)
-          st := { st with complianceRetries := 0 }
+        else
+          st := { st with compliancePasses := st.compliancePasses + 1 }
+          if st.complianceRetries > 0 then
+            env.events.emit (.complianceAccepted st.complianceRetries)
+            st := { st with complianceRetries := 0 }
 
       -- a numbered plan in the reply becomes structured plan state
       if st.plan.isNone then
@@ -294,7 +315,15 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
           let res ← executeCall execEnv call
           if let some p := touchedPath? call.name res then
             st := st.noteFile p
-          st := st.addMessage (Message.toolResult call.id call.name res.content)
+          -- Injection shield: detect prompt-injection patterns in tool output
+          -- and wrap the content in a data fence when found.
+          let injected := detectInjection res.content
+          if !injected.isEmpty then
+            st := { st with injectionBlocks := st.injectionBlocks + 1 }
+            env.events.emit (.injectionBlocked injected call.name)
+            st := st.addMessage (Message.toolResult call.id call.name (shieldText res.content))
+          else
+            st := st.addMessage (Message.toolResult call.id call.name res.content)
         st ← advance env st .toolFinished
         if st.phase.isTerminal then break
         continue

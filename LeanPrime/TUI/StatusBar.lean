@@ -42,6 +42,11 @@ structure StatusModel where
   mode        : String := "governed"
   /-- Set while a reply is being re-requested for breaking a rule. -/
   complianceRetry : Option Nat := none
+  /-- Cumulative compliance pass/fail for the status line. -/
+  compliancePasses : Nat := 0
+  complianceFailures : Nat := 0
+  /-- Injection attempts blocked. -/
+  injectionBlocks : Nat := 0
   deriving Inhabited
 
 /-- Terminal width, best effort.  `COLUMNS` is exported by most shells; the
@@ -86,8 +91,13 @@ def StatusModel.lines (m : StatusModel) (width : Nat) : String × String :=
   let ruleText :=
     if m.directives == 0 then "no directives"
     else s!"{m.directives} rules · {m.enforced} enforced"
+  let compText :=
+    if m.compliancePasses + m.complianceFailures == 0 then ""
+    else
+      let inj := if m.injectionBlocks > 0 then s!" · {m.injectionBlocks} blocked" else ""
+      s!" · {m.compliancePasses}✓/{m.complianceFailures}✗{inj}"
   let second := layoutLine width
-    s!"{m.promptOrigin} · {ruleText}"
+    s!"{m.promptOrigin} · {ruleText}{compText}"
     m.mode
   (first, second)
 

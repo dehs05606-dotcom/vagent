@@ -38,6 +38,10 @@ inductive AgentEvent where
   | complianceRejected (attempt : Nat) (violations : String)
   /-- A previously rejected reply now satisfies every checkable rule. -/
   | complianceAccepted (afterAttempts : Nat)
+  /-- Prompt integrity was verified (or failed). -/
+  | integrityChecked (passed : Bool) (detail : String)
+  /-- A prompt injection attempt was detected in tool output. -/
+  | injectionBlocked (patterns : List String) (toolName : String)
   | budgetWarning (what : String) (used : Nat) (limit : Nat)
   | errorOccurred (e : LPError)
   | notice (text : String)
@@ -96,6 +100,12 @@ def toJson : AgentEvent → Json
        ("violations", .str v)]
   | .complianceAccepted n => Json.mkObj
       [("event", .str "compliance_accepted"), ("after_attempts", .num (JsonNumber.fromNat n))]
+  | .integrityChecked ok d => Json.mkObj
+      [("event", .str "integrity_checked"), ("passed", .bool ok), ("detail", .str d)]
+  | .injectionBlocked ps tool => Json.mkObj
+      [("event", .str "injection_blocked"),
+       ("patterns", .arr (ps.toArray.map (fun s => Json.str s))),
+       ("tool", .str tool)]
   | .budgetWarning w u l => Json.mkObj
       [("event", .str "budget_warning"), ("what", .str w),
        ("used", .num (JsonNumber.fromNat u)), ("limit", .num (JsonNumber.fromNat l))]

@@ -284,6 +284,11 @@ structure AgentState where
   /-- Consecutive replies rejected for breaking a rule from the system
       prompt.  Reset on the first compliant reply. -/
   complianceRetries : Nat := 0
+  /-- Cumulative compliance pass/fail across the run. -/
+  compliancePasses : Nat := 0
+  complianceFailures : Nat := 0
+  /-- Injection attempts detected in tool output during this run. -/
+  injectionBlocks : Nat := 0
   cancelled : Bool := false
   deriving Inhabited
 

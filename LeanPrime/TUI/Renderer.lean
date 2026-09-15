@@ -129,6 +129,14 @@ def mkRenderer (color : Bool) (ui : UiConfig) (modelName : String)
       | .complianceAccepted n =>
         bar.update (fun m => { m with complianceRetry := none })
         line (style c green s!"  ✓ reply satisfies every enforced rule (after {n} retry/retries)")
+      | .integrityChecked ok detail =>
+        if ok then
+          line (style c green s!"  ✓ prompt integrity verified — {detail}")
+        else
+          line (style c red s!"  ✗ PROMPT INTEGRITY FAILED — {detail}")
+      | .injectionBlocked patterns toolName =>
+        line (style c red s!"  ⚠ injection attempt blocked in {toolName} output")
+        line (style c grey s!"    patterns: {String.intercalate ", " patterns}")
       | .budgetWarning what used limit =>
         line (style c yellow s!"  ! {what} reached ({used}/{limit})")
       | .errorOccurred err_ =>
