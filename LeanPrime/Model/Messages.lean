@@ -100,7 +100,7 @@ structure ToolSchema where
 /-- Reason the model stopped generating. -/
 inductive FinishReason where
   | stop | length | toolCalls | contentFilter | other (s : String)
-  deriving Repr, Inhabited
+  deriving Repr, Inhabited, BEq, DecidableEq
 
 def FinishReason.ofString (s : String) : FinishReason :=
   match s with

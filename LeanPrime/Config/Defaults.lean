@@ -23,7 +23,9 @@ def defaultProvider : ProviderConfig := {
   maxTokens         := 8192
   temperature       := 0.2
   stream            := true
-  maxRetries        := 3
+  maxRetries        := 4
+  -- The configured router caps requests at 10/minute; 6.5s keeps us under it.
+  minIntervalMs     := 6500
   extraHeaders      := []
 }
 

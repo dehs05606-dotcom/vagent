@@ -254,10 +254,31 @@ def StreamState.finalize (s : StreamState) : ModelResponse :=
 
 /-! ### Provider construction -/
 
-/-- Exponential backoff with a ceiling, in milliseconds. -/
-def backoffMs (attempt : Nat) : Nat :=
-  let ms := 600 * 2 ^ attempt
-  if ms > 8000 then 8000 else ms
+/-- Backoff before the next attempt, in milliseconds.
+
+    A rate-limit answer is different in kind from a transient server error:
+    the limit is usually per minute, so a sub-second retry is guaranteed to
+    fail again and merely spends an attempt.  Those wait far longer. -/
+def backoffMs (attempt : Nat) (rateLimited : Bool) : Nat :=
+  if rateLimited then
+    let ms := 15000 * (attempt + 1)
+    if ms > 60000 then 60000 else ms
+  else
+    let ms := 600 * 2 ^ attempt
+    if ms > 8000 then 8000 else ms
+
+/-- Does this response mean "you are sending too many requests"? -/
+def isRateLimited (status : Nat) (body : String) : Bool :=
+  status == 429 || containsSubstrI body "rate limit" || containsSubstrI body "too many requests"
+
+/-- Pace outbound requests so a per-minute provider cap is not tripped. -/
+def throttle (lastRef : IO.Ref Nat) (minIntervalMs : Nat) : IO Unit := do
+  if minIntervalMs == 0 then return
+  let now ← IO.monoMsNow
+  let last ← lastRef.get
+  if last != 0 && now < last + minIntervalMs then
+    IO.sleep (UInt32.ofNat (last + minIntervalMs - now))
+  lastRef.set (← IO.monoMsNow)
 
 
 private def endpoint (baseUrl : String) : String :=
@@ -269,7 +290,8 @@ private def endpoint (baseUrl : String) : String :=
     `apiKey` is captured here and only ever reaches the transport through
     `secretHeaders`, which the transport keeps out of process arguments. -/
 def make (cfg : ProviderConfig) (apiKey : String) (http : HttpClient)
-    (log : Logger) : ModelProvider :=
+    (log : Logger) : IO ModelProvider := do
+  let lastRequest ← IO.mkRef (0 : Nat)
   let secret : List (String × String) :=
     if apiKey.isEmpty then [] else [("Authorization", s!"Bearer {apiKey}")]
   let headers : List (String × String) :=
@@ -286,7 +308,8 @@ def make (cfg : ProviderConfig) (apiKey : String) (http : HttpClient)
     body := some body
     timeoutSec := cfg.timeoutSec
     connectTimeoutSec := cfg.connectTimeoutSec }
-  { name := cfg.kind.toString
+  return {
+    name := cfg.kind.toString
     model := cfg.model
     capabilities := { streaming := true, toolCalling := true, reasoning := true, vision := false }
     chat := fun req => do
@@ -297,19 +320,23 @@ def make (cfg : ProviderConfig) (apiKey : String) (http : HttpClient)
         let body := j.compress
         let mut attempt := 0
         let mut lastErr := err .provider "no attempt made"
+        let mut limited := false
         repeat
+          throttle lastRequest cfg.minIntervalMs
           match ← http.request (mkReq body) with
-          | .error e => lastErr := e
+          | .error e => lastErr := e; limited := false
           | .ok resp =>
             if resp.ok && !transientErrorBody resp.body then
               return parseResponse resp.body
             let detail := (parseErrorBody resp.body).getD (truncate resp.body 400)
+            limited := isRateLimited resp.status resp.body
             lastErr := err .provider s!"provider returned HTTP {resp.status}" (some detail)
-            if !(resp.retryable || transientErrorBody resp.body) then
+            if !(resp.retryable || transientErrorBody resp.body || limited) then
               return .error lastErr
           if attempt >= cfg.maxRetries then break
-          log.debug s!"retrying model request (attempt {attempt + 1}): {lastErr.message}"
-          IO.sleep (UInt32.ofNat (backoffMs attempt))
+          let wait := backoffMs attempt limited
+          log.debug s!"retrying model request in {wait}ms (attempt {attempt + 1}): {lastErr.message}"
+          IO.sleep (UInt32.ofNat wait)
           attempt := attempt + 1
         return .error lastErr
     stream := fun req emit => do
@@ -319,7 +346,9 @@ def make (cfg : ProviderConfig) (apiKey : String) (http : HttpClient)
        let body := j.compress
        let mut attempt := 0
        let mut lastErr := err .provider "no attempt made"
+       let mut limited := false
        repeat
+        throttle lastRequest cfg.minIntervalMs
         let stRef ← IO.mkRef ({} : StreamState)
         let onLine : String → IO Unit := fun line => do
           let l := trim line
@@ -342,7 +371,8 @@ def make (cfg : ProviderConfig) (apiKey : String) (http : HttpClient)
             emit (.finished final.finishReason)
             return .ok final
           -- No SSE payload: either an error document or a non-streaming server.
-          if transientErrorBody resp.body || resp.retryable then
+          limited := isRateLimited resp.status resp.body
+          if transientErrorBody resp.body || resp.retryable || limited then
             lastErr := err .provider
               s!"provider unavailable (HTTP {resp.status})"
               (some ((parseErrorBody resp.body).getD (truncate resp.body 200)))
@@ -356,8 +386,9 @@ def make (cfg : ProviderConfig) (apiKey : String) (http : HttpClient)
               return .ok r
             | .error e => return .error e
         if attempt >= cfg.maxRetries then break
-        log.debug s!"retrying model stream (attempt {attempt + 1}): {lastErr.message}"
-        IO.sleep (UInt32.ofNat (backoffMs attempt))
+        let wait := backoffMs attempt limited
+        log.debug s!"retrying model stream in {wait}ms (attempt {attempt + 1}): {lastErr.message}"
+        IO.sleep (UInt32.ofNat wait)
         attempt := attempt + 1
        return .error lastErr }
 

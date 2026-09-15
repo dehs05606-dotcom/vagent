@@ -24,7 +24,7 @@ def splitNonEmpty (s sep : String) : List String :=
 
 /-- Truncate a string to `n` characters, appending an ellipsis marker when cut. -/
 def truncate (s : String) (n : Nat) : String :=
-  if s.length <= n then s else s.take n |>.toString ++ "…"
+  if s.length <= n then s else (s.take n).toString ++ "…"
 
 /-- Keep the first `head` and last `tail` lines of a long text, replacing the
     middle with a marker.  Used to bound tool output injected into the model

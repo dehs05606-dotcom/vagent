@@ -84,6 +84,10 @@ structure ProviderConfig where
   temperature   : Float
   stream        : Bool
   maxRetries    : Nat
+  /-- Minimum gap between outbound model requests, in milliseconds.
+      Routed providers commonly enforce a per-minute request cap; pacing
+      requests client-side avoids burning retries on HTTP 429. -/
+  minIntervalMs : Nat
   /-- Extra `Header: value` lines sent with every request. -/
   extraHeaders  : List String
   deriving Inhabited

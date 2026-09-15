@@ -38,6 +38,7 @@ def applyToml (base : Config) (d : Document) : LPResult Config := do
     temperature       := d.getFloat? "provider.temperature" |>.getD p.temperature
     stream            := d.getBool? "provider.stream" |>.getD p.stream
     maxRetries        := d.getNat? "provider.max_retries" |>.getD p.maxRetries
+    minIntervalMs     := d.getNat? "provider.min_interval_ms" |>.getD p.minIntervalMs
     extraHeaders      := d.getStrArray? "provider.extra_headers" |>.getD p.extraHeaders
   }
   let approval ← (match d.getStr? "agent.approval_mode" with

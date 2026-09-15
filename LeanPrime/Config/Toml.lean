@@ -177,15 +177,57 @@ partial def parseArray (body : String) : LPResult Value := do
   return .array acc
 end
 
+/-- Net bracket depth of a line, ignoring brackets inside quoted strings. -/
+private def bracketBalance (s : String) : Int := Id.run do
+  let mut depth : Int := 0
+  let mut inStr := false
+  let mut esc := false
+  for c in s.toList do
+    if esc then esc := false
+    else if c == '\\' && inStr then esc := true
+    else if c == '"' then inStr := !inStr
+    else if !inStr then
+      if c == '[' then depth := depth + 1
+      else if c == ']' then depth := depth - 1
+  return depth
+
+/-- Join lines belonging to one array value that spans several source lines,
+    keeping the line number of where the value started for error reporting.
+    Table headers (`[x]`, `[[x]]`) are balanced on their own line and so are
+    never joined. -/
+private def logicalLines (src : String) : List (Nat × String) := Id.run do
+  let mut out : List (Nat × String) := []
+  let mut pending : Option (Nat × String) := none
+  let mut lineNo := 0
+  for rawLine in src.splitOn "\n" do
+    lineNo := lineNo + 1
+    let line := trim (stripComment rawLine)
+    match pending with
+    | some (startLine, acc) =>
+      let joined := acc ++ " " ++ line
+      if bracketBalance joined <= 0 then
+        out := out ++ [(startLine, joined)]
+        pending := none
+      else
+        pending := some (startLine, joined)
+    | none =>
+      if line.isEmpty then continue
+      if bracketBalance line > 0 && !line.startsWith "[" then
+        pending := some (lineNo, line)
+      else
+        out := out ++ [(lineNo, line)]
+  -- an unterminated value is handed on as-is so `parseValue` reports it
+  match pending with
+  | some (startLine, acc) => out := out ++ [(startLine, acc)]
+  | none => pure ()
+  return out
+
 /-- Parse a TOML document into a flat dotted-key map. -/
 def parse (src : String) : LPResult Document := do
   let mut entries : List (String × Value) := []
   let mut table : String := ""
   let mut arrayCounts : List (String × Nat) := []
-  let mut lineNo := 0
-  for rawLine in src.splitOn "\n" do
-    lineNo := lineNo + 1
-    let line := trim (stripComment rawLine)
+  for (lineNo, line) in logicalLines src do
     if line.isEmpty then continue
     if line.startsWith "[[" && line.endsWith "]]" then
       let name := trim ((line.drop 2).dropEnd 2).toString

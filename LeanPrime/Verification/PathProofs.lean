@@ -31,13 +31,13 @@ theorem normalizeGo_noParent :
     intro acc h
     simp only [normalizeGo]
     by_cases hs : s == ".."
-    · simp only [hs, if_pos]
+    · simp only [hs, ite_true]
       cases acc with
       | nil => exact ih [] (by intro x hx; cases hx)
       | cons a as =>
         simp only
         exact ih as (fun x hx => h x (List.mem_cons_of_mem a hx))
-    · simp only [hs, if_neg, Bool.false_eq_true, if_false]
+    · simp only [hs, Bool.false_eq_true, ite_false]
       refine ih (s :: acc) ?_
       intro x hx
       cases hx with

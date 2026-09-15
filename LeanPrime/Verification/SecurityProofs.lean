@@ -79,7 +79,7 @@ theorem auto_never_allows_high (p : Policy) (r : Requirement)
     simp [beq_eq_false_iff_ne, hrisk]
   by_cases hro : p.mode = .readOnly
   · rw [hmode] at hro; exact absurd hro (by simp)
-  · simp [hne, hmode, hrisk, Decision.isAllow]
+  · simp [hmode, hrisk, Decision.isAllow]
 
 /-- Escalation step: with chaining present, the result is never `low`. -/
 theorem escalateChaining_not_low (cmdline : String) (base : Requirement)
@@ -99,7 +99,7 @@ theorem chaining_is_not_low (denied : List String) (cmdline : String)
     (hhead : denied.contains (commandHead cmdline) = false)
     (hne : (commandHead cmdline).isEmpty = false) :
     (classifyCommand denied cmdline).risk ≠ .low := by
-  simp only [classifyCommand, hhead, hne, if_false, Bool.false_eq_true]
+  simp only [classifyCommand, hhead, hne, Bool.false_eq_true, ite_false]
   exact escalateChaining_not_low cmdline _ hchain
 
 end LeanPrime

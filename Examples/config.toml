@@ -1,0 +1,77 @@
+# lean-prime configuration
+#
+# Location: ~/.config/lean-prime/config.toml   (or pass --config <path>)
+#
+# Precedence, later winning:
+#   built-in defaults → this file → environment variables → command line flags
+#
+# NEVER put an API key in this file. Only the NAME of the environment
+# variable holding it belongs here.
+
+[provider]
+kind              = "openai-compatible"
+base_url          = "https://router.kiosapi.com/v1"
+model             = "oc/muse-spark-1.3-contributor"
+api_key_env       = "LEANPRIME_API_KEY"
+
+# Reasoning models spend a large share of the completion budget on thinking
+# that the router may not forward. Too low a value shows up as an empty reply
+# with finish_reason "length".
+max_tokens        = 8192
+temperature       = 0.2
+stream            = true
+
+timeout_sec       = 180
+connect_timeout_sec = 20
+max_retries       = 4
+
+# Pace outbound requests so a per-minute provider cap is not tripped.
+# 6500ms keeps a 10-requests-per-minute limit comfortably satisfied.
+min_interval_ms   = 6500
+
+# extra_headers = ["X-Title: lean-prime"]
+
+[agent]
+# auto      — safe work runs unattended, risky work asks
+# ask       — every mutating action asks
+# read-only — inspection only; mutating tools are not advertised to the model
+# yolo      — no prompting (the deny list still applies)
+approval_mode     = "auto"
+
+max_iterations    = 40
+max_tool_calls    = 120
+max_repair_rounds = 5
+wall_clock_sec    = 1800
+context_budget    = 96000
+persist_sessions  = true
+
+[limits]
+# Applied to every tool result before it may enter the model's context.
+max_output_bytes  = 32768
+head_lines        = 120
+tail_lines        = 60
+max_file_bytes    = 262144
+
+[security]
+# Refused outright in every approval mode, matched on the command's first word.
+denied_commands   = ["shutdown", "reboot", "halt", "poweroff", "mkfs",
+                     "fdisk", "dd", "sudo", "su", "doas"]
+shell_timeout_sec = 120
+
+[logging]
+level             = "info"     # trace | debug | info | warn | error
+trace             = false
+# file            = "/tmp/lean-prime.log"
+
+[ui]
+color             = true
+show_plan         = true
+show_thinking     = true
+compact           = false
+
+# MCP servers are parsed but not yet used — see Docs/mcp.md
+# [[mcp]]
+# name    = "example"
+# command = "example-mcp-server"
+# args    = ["--stdio"]
+# enabled = true

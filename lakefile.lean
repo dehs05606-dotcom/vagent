@@ -16,6 +16,10 @@ lean_exe «lean-prime» where
   root := `Main
   supportInterpreter := true
 
+lean_lib Tests where
+  globs := #[.submodules `Tests]
+
+@[test_driver]
 lean_exe «lean-prime-tests» where
   root := `Tests.Main
   supportInterpreter := true
