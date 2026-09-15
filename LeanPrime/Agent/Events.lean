@@ -52,6 +52,18 @@ inductive AgentEvent where
   | anchorInjected (reason : String)
   /-- Instruction distance triggered an early re-assertion. -/
   | distanceTriggered (tokensSince : Nat) (threshold : Nat)
+  /-- A prompt custody checkpoint ran. -/
+  | custodyChecked (checkpoint : String) (intact : Bool) (detail : String)
+  /-- An adversarial review of a reply completed. -/
+  | reviewCompleted (verdict : String) (score : Nat) (unsatisfied : Nat)
+  /-- A reply was sent back for a rewrite after a failed review. -/
+  | reviewRewrite (attempt : Nat) (summary : String)
+  /-- The sentinel escalated. -/
+  | sentinelAction (action : String) (reason : String)
+  /-- The conversation was rolled back to a clean checkpoint. -/
+  | conversationRolledBack (discarded : Nat) (toTurn : Nat)
+  /-- The run's forensic ledger was sealed at the end. -/
+  | ledgerSealed (entries : Nat) (failures : Nat) (sealValue : String) (intact : Bool)
   | budgetWarning (what : String) (used : Nat) (limit : Nat)
   | errorOccurred (e : LPError)
   | notice (text : String)
@@ -130,6 +142,29 @@ def toJson : AgentEvent → Json
       [("event", .str "distance_triggered"),
        ("tokens_since", .num (JsonNumber.fromNat tokens)),
        ("threshold", .num (JsonNumber.fromNat threshold))]
+  | .custodyChecked cp intact detail => Json.mkObj
+      [("event", .str "custody_checked"), ("checkpoint", .str cp),
+       ("intact", .bool intact), ("detail", .str detail)]
+  | .reviewCompleted verdict score unsat => Json.mkObj
+      [("event", .str "review_completed"), ("verdict", .str verdict),
+       ("score", .num (JsonNumber.fromNat score)),
+       ("unsatisfied", .num (JsonNumber.fromNat unsat))]
+  | .reviewRewrite attempt summary => Json.mkObj
+      [("event", .str "review_rewrite"),
+       ("attempt", .num (JsonNumber.fromNat attempt)),
+       ("summary", .str (truncate summary 500))]
+  | .sentinelAction action reason => Json.mkObj
+      [("event", .str "sentinel_action"), ("action", .str action),
+       ("reason", .str reason)]
+  | .conversationRolledBack discarded toTurn => Json.mkObj
+      [("event", .str "conversation_rolled_back"),
+       ("discarded", .num (JsonNumber.fromNat discarded)),
+       ("to_turn", .num (JsonNumber.fromNat toTurn))]
+  | .ledgerSealed entries failures sealValue intact => Json.mkObj
+      [("event", .str "ledger_sealed"),
+       ("entries", .num (JsonNumber.fromNat entries)),
+       ("failures", .num (JsonNumber.fromNat failures)),
+       ("seal", .str sealValue), ("intact", .bool intact)]
   | .budgetWarning w u l => Json.mkObj
       [("event", .str "budget_warning"), ("what", .str w),
        ("used", .num (JsonNumber.fromNat u)), ("limit", .num (JsonNumber.fromNat l))]

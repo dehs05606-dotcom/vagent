@@ -67,6 +67,20 @@ def defaultPromptConfig : PromptConfig := {
   -- instead of an unbounded loop.
   maxComplianceRetries := 3
   restateBeforeEveryCall := true
+  -- Custody is cheap: five digests over a prompt-sized string, once per
+  -- checkpoint.  On by default because a prompt that changed mid-run is a
+  -- failure the operator would always want to hear about.
+  vaultCustody := true
+  -- Review is one extra model call per turn-ending reply, so it is opt-in.
+  -- Turn it on when the prompt's rules are the kind no string comparison
+  -- can decide.
+  adversarialReview := false
+  maxReviewRewrites := 2
+  minReviewScore := 50
+  sentinelRollback := true
+  -- Eight consecutive failures is well past "the model missed a rule" and
+  -- into "this is not converging".
+  haltAfterFailures := 8
 }
 
 def defaultConfig (ws : System.FilePath) : Config := {

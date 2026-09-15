@@ -82,6 +82,9 @@ def main (argv : List String) : IO UInt32 := do
         | .ok stack =>
           IO.println (Ansi.style color Ansi.bold "system prompt in force")
           IO.println (stack.describe)
+          IO.println ""
+          IO.println (Ansi.style color Ansi.bold "custody seal")
+          IO.println ((PromptVault.seal stack.render).describe)
           if !stack.unknownVars.isEmpty then
             IO.println (Ansi.style color Ansi.yellow
               s!"\nwarning: the prompt uses {stack.unknownVars.length} unknown \

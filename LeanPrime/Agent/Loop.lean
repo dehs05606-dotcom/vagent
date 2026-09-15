@@ -23,6 +23,8 @@ import LeanPrime.Agent.Prompt
 import LeanPrime.Agent.Planner
 import LeanPrime.Agent.PromptLayers
 import LeanPrime.Agent.Guardian
+import LeanPrime.Agent.Sentinel
+import LeanPrime.Agent.Adversary
 import LeanPrime.Context.Manager
 import LeanPrime.Model.Provider
 
@@ -141,9 +143,30 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
   env.events.emit (.sessionStarted sessionId task env.provider.model)
 
   let rules := env.prompts.rules
-  let retryLimit := env.config.prompt.maxComplianceRetries
-  let promptHash := PromptIntegrity.compute env.prompts.render
+  let pcfg := env.config.prompt
+  let retryLimit := pcfg.maxComplianceRetries
   let mut guardianSt := initGuardian env.prompts.render env.prompts.directives
+
+  -- Seal the prompt.  Every later read of it goes through the vault, and
+  -- every custody checkpoint compares the conversation's system message
+  -- against this seal.
+  let mut vault := PromptVault.seal env.prompts.render
+  let mut ledger : LedgerChain := {}
+  let mut sentinel : SentinelState :=
+    { thresholds := { haltAfter := if pcfg.haltAfterFailures == 0 then 1000
+                                   else pcfg.haltAfterFailures } }
+  let reviewPolicy : ReviewPolicy :=
+    { enabled := pcfg.adversarialReview
+      finalOnly := true
+      rewriteOnFail := true
+      maxRewrites := pcfg.maxReviewRewrites
+      minScore := pcfg.minReviewScore }
+  let mut reviewRewrites := 0
+
+  let elapsed : IO Nat := do
+    let now ← IO.monoMsNow
+    return now - startedMs
+  ledger := ledger.append 0 (.runStarted (truncate task 200) vault.digests.short)
 
   -- Phase: understanding -> inspecting -> context
   let mut st : AgentState :=
@@ -213,22 +236,32 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
       st := st.addMessage
         { Message.user (reminderMessage env.prompts.directives) with pinned := false }
 
-    -- Prompt integrity gate: verify the system prompt message has not been
-    -- altered since the run started.  Any mutation — accidental or injected —
-    -- is a hard stop: continuing with a different instruction set defeats
-    -- the purpose of having one.
-    match st.messages.head? with
-    | some sysMsg =>
-      let sysText := sysMsg.plainText
-      if !promptHash.verify sysText then
-        env.events.emit (.integrityChecked false
-          "system prompt message was altered mid-run")
-        env.events.emit (.errorOccurred (err .internal
-          "prompt integrity failure: the system prompt message in the conversation \
-           no longer matches the original; aborting"))
-        st ← advance env st .fatalError
-        break
-    | none => pure ()
+    -- Prompt custody gate: verify the system prompt message against the
+    -- seal taken at load.  Five independent digests plus a per-line hash
+    -- chain, so a mutation is both detected and located.  Any mutation —
+    -- accidental or injected — is a hard stop: continuing with a different
+    -- instruction set defeats the purpose of having one.
+    if pcfg.vaultCustody then
+      match st.messages.head? with
+      | some sysMsg =>
+        let (verdict, v') := vault.check sysMsg.plainText
+        vault := v'
+        let ms ← elapsed
+        ledger := ledger.append ms
+          (.custodyCheck .preCall verdict.isIntact verdict.describe)
+        env.events.emit (.custodyChecked (toString Checkpoint.preCall)
+          verdict.isIntact verdict.describe)
+        if !verdict.isIntact then
+          let (action, s') := sentinel.step .custodyFailure
+          sentinel := s'
+          env.events.emit (.sentinelAction (toString action) action.reason)
+          env.events.emit (.errorOccurred (err .internal
+            (tamperReport .preCall verdict)
+            (some verdict.describe)
+            (some "the prompt is restored from the seal; re-run to continue")))
+          st ← advance env st .fatalError
+          break
+      | none => pure ()
 
     -- model call
     st ← advance env st .modelRequested
@@ -268,8 +301,50 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
       -- Escalation: gentle (attempt 1) → firm (attempt 2) → explicit (attempt 3) → abort.
       if !rules.isEmpty && resp.toolCalls.isEmpty && !resp.content.isEmpty then
         let violations := checkCompliance rules resp.content
+        let ms ← elapsed
         if !violations.isEmpty then
           st := { st with complianceFailures := st.complianceFailures + 1 }
+          ledger := ledger.append ms
+            (.complianceVerdict false rules.length (violationSummary violations))
+
+          -- The sentinel sees the run, not the reply: it decides whether this
+          -- failure is one of a pattern bad enough to roll back, quarantine
+          -- or halt on.
+          let (action, s') := sentinel.step .ruleViolation
+          sentinel := s'
+          if action.rank > 0 then
+            env.events.emit (.sentinelAction (toString action) action.reason)
+            ledger := ledger.append ms
+              (.escalation "compliance" (toString action) action.reason)
+          if action.isHalt then
+            env.events.emit (.errorOccurred (err .verification
+              s!"sentinel halted the run: {action.reason}"
+              (some (violationSummary violations))
+              (some "check that the rules in SystemPrompt.lean are satisfiable")))
+            st ← advance env st .fatalError
+            break
+          match action with
+          | .restore toTurn reason =>
+            if pcfg.sentinelRollback then
+              match sentinel.lastGood with
+              | some cp =>
+                let before := st.messages.length
+                st := { st with messages := applyRollback cp st.messages reason }
+                env.events.emit (.conversationRolledBack
+                  (before - st.messages.length.min before) toTurn)
+                ledger := ledger.append ms (.rollback toTurn reason)
+              | none => pure ()
+          | .quarantine reason =>
+            st := st.addMessage
+              { Message.user (quarantineMessage vault.text env.prompts.directives reason)
+                with pinned := true }
+            ledger := ledger.append ms (.quarantine reason)
+          | .reassert _ =>
+            if !env.prompts.directives.isEmpty then
+              st := st.addMessage
+                { Message.user (reminderMessage env.prompts.directives) with pinned := true }
+          | _ => pure ()
+
           if st.complianceRetries >= retryLimit then
             env.events.emit (.errorOccurred (err .verification
               s!"the reply still breaks {violations.length} rule(s) after \
@@ -287,6 +362,7 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
           continue
         else
           st := { st with compliancePasses := st.compliancePasses + 1 }
+          ledger := ledger.append ms (.complianceVerdict true rules.length "")
           if st.complianceRetries > 0 then
             env.events.emit (.complianceAccepted st.complianceRetries)
             st := { st with complianceRetries := 0 }
@@ -299,20 +375,44 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
           env.prompts.render task resp.content guardianSt
         guardianSt := updateGuardianState guardianSt verdict
           resp.usage.totalTokens resp.content
+        let gms ← elapsed
         match verdict.action with
         | .reject detail =>
           st := { st with guardianRejections := st.guardianRejections + 1 }
+          ledger := ledger.append gms (.guardianVerdict "reject"
+            (match verdict.driftReport with
+             | some r => r.severity.toString
+             | none => "unknown") (truncate detail 200))
           env.events.emit (.guardianRejected (truncate detail 200))
+          let (action, s') := sentinel.step .drift
+          sentinel := s'
+          if action.rank > 0 then
+            env.events.emit (.sentinelAction (toString action) action.reason)
+          if action.isHalt then
+            env.events.emit (.errorOccurred (err .verification
+              s!"sentinel halted the run: {action.reason}"))
+            st ← advance env st .fatalError
+            break
           st := st.addMessage { Message.user detail with pinned := false }
           continue
         | .warn message =>
           st := { st with guardianWarnings := st.guardianWarnings + 1 }
+          ledger := ledger.append gms (.guardianVerdict "warn"
+            (match verdict.driftReport with
+             | some r => r.severity.toString
+             | none => "unknown") (truncate message 200))
           env.events.emit (.guardianWarning
             (match verdict.driftReport with
              | some r => r.severity.toString
              | none => "unknown") (truncate message 200))
+          let (_, s') := sentinel.step .blemished
+          sentinel := s'
           st := st.addMessage { Message.user message with pinned := false }
-        | .accept => pure ()
+        | .accept =>
+          -- A clean turn is where a checkpoint is worth taking: this is the
+          -- conversation state the sentinel rolls back to if drift follows.
+          let (_, s') := sentinel.step .clean
+          sentinel := s'.checkpoint st.messages
         if verdict.distanceTriggered then
           st := { st with distanceTriggers := st.distanceTriggers + 1 }
           env.events.emit (.distanceTriggered
@@ -390,6 +490,43 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
            make your first tool call now.")
         continue
 
+      -- Adversarial review: hand the reply to a fresh model call, with the
+      -- directives and an explicitly adversarial brief, and let it rule.
+      -- This is the layer that reaches the rules no string comparison can —
+      -- and it is a separate call precisely so the reviewer has no stake in
+      -- the reply having been right.
+      if reviewPolicy.enabled && !env.prompts.directives.isEmpty
+          && !resp.content.isEmpty then
+        match ← runReview env.provider env.prompts.directives task resp.content with
+        | .error e =>
+          -- A reviewer that could not be reached is not a pass.  Say so and
+          -- carry on rather than silently dropping the layer.
+          env.events.emit (.notice s!"compliance review unavailable: {e.message}")
+        | .ok review =>
+          let rms ← elapsed
+          ledger := ledger.append rms (.adversarialReview
+            review.verdict.toString review.score (truncate review.summary 200))
+          env.events.emit (.reviewCompleted review.verdict.toString review.score
+            review.violated.length)
+          if reviewPolicy.demandsRewrite review reviewRewrites then
+            reviewRewrites := reviewRewrites + 1
+            let (action, s') := sentinel.step .reviewFailure
+            sentinel := s'
+            if action.rank > 0 then
+              env.events.emit (.sentinelAction (toString action) action.reason)
+            if action.isHalt then
+              env.events.emit (.errorOccurred (err .verification
+                s!"sentinel halted the run: {action.reason}"))
+              st ← advance env st .fatalError
+              break
+            env.events.emit (.reviewRewrite reviewRewrites review.summary)
+            st := st.addMessage
+              { Message.user (rewriteRequest review) with pinned := false }
+            continue
+          else if !review.isClean then
+            st := st.addMessage
+              { Message.user (reviewWarningNote review) with pinned := false }
+
       -- Before accepting completion, require the model to account for each
       -- of the operator's rules.  Asked once per run: the point is a
       -- deliberate pass over the checklist at the moment it matters, not a
@@ -437,6 +574,22 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
     if let some plan := st.plan then
       st := { st with plan := some (completePlan plan) }
 
+  -- Final custody check.  A run that reports success under a prompt that
+  -- changed along the way did not do what it says it did, so this runs on
+  -- the completion path as well as the failure one.
+  if pcfg.vaultCustody then
+    if let some sysMsg := st.messages.head? then
+      let (verdict, v') := vault.check sysMsg.plainText
+      vault := v'
+      let ms ← elapsed
+      ledger := ledger.append ms
+        (.custodyCheck .preFinish verdict.isIntact verdict.describe)
+      env.events.emit (.custodyChecked (toString Checkpoint.preFinish)
+        verdict.isIntact verdict.describe)
+      if !verdict.isIntact && st.phase == .completed then
+        env.events.emit (.errorOccurred (err .internal (tamperReport .preFinish verdict)))
+        st := { st with phase := .failed }
+
   let summary := match st.phase with
     | .completed =>
       let verdict := match st.lastVerification with
@@ -446,6 +599,14 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
     | .failed => "run failed; see the errors above"
     | .cancelled => "cancelled by the user"
     | other => s!"stopped in phase {other}"
+
+  -- Seal the ledger.  Emitted last so the transcript ends with the record
+  -- of what was actually checked, and whether that record is whole.
+  let endMs ← elapsed
+  ledger := ledger.append endMs (.runEnded st.phase.toString summary)
+  env.events.emit (.ledgerSealed ledger.length ledger.failureCount
+    ledger.runSeal ledger.isIntact)
+
   env.events.emit (.finished st.phase summary)
   return { phase := st.phase, summary := summary, state := st }
 

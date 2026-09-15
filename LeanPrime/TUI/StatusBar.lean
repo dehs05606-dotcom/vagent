@@ -52,6 +52,13 @@ structure StatusModel where
   guardianRejections : Nat := 0
   /-- Authority conflicts. -/
   authorityConflicts : Nat := 0
+  /-- Prompt custody: short fingerprint, and whether the seal still holds. -/
+  custodyFingerprint : String := ""
+  custodyIntact : Bool := true
+  /-- Sentinel escalation state, when it has escalated at all. -/
+  sentinelState : String := ""
+  /-- Most recent adversarial review score, when review is on. -/
+  reviewScore : Option Nat := none
   deriving Inhabited
 
 /-- Terminal width, best effort.  `COLUMNS` is exported by most shells; the
@@ -104,10 +111,20 @@ def StatusModel.lines (m : StatusModel) (width : Nat) : String × String :=
         then s!" · G:{m.guardianWarnings}w/{m.guardianRejections}r" else ""
       let auth := if m.authorityConflicts > 0
         then s!" · {m.authorityConflicts} conflict" else ""
-      s!" · {m.compliancePasses}✓/{m.complianceFailures}✗{inj}{guard}{auth}"
+      let review := match m.reviewScore with
+        | some n => s!" · R:{n}"
+        | none => ""
+      s!" · {m.compliancePasses}✓/{m.complianceFailures}✗{inj}{guard}{auth}{review}"
+  let custody :=
+    if m.custodyFingerprint.isEmpty then ""
+    else if m.custodyIntact then s!"⛨{m.custodyFingerprint} "
+    else "⛨BROKEN "
+  let right :=
+    if m.sentinelState.isEmpty then s!"{custody}{m.mode}"
+    else s!"{custody}{m.sentinelState} · {m.mode}"
   let second := layoutLine width
     s!"{m.promptOrigin} · {ruleText}{compText}"
-    m.mode
+    right
   (first, second)
 
 /-- A drawable, erasable status block. -/

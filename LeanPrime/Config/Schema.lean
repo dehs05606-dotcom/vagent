@@ -186,6 +186,23 @@ structure PromptConfig where
       addition to keeping them at the top of the conversation.  Costs tokens;
       buys the strongest recency position there is. -/
   restateBeforeEveryCall : Bool
+  /-- Seal the prompt under five digests and verify custody at every
+      checkpoint.  See `LeanPrime.Prompt.Vault`. -/
+  vaultCustody : Bool
+  /-- Send each turn-ending reply to a fresh model call that rules on it
+      against the directives.  Costs one extra call per reviewed reply.
+      See `LeanPrime.Agent.Adversary`. -/
+  adversarialReview : Bool
+  /-- Rewrite rounds allowed when the adversarial reviewer fails a reply. -/
+  maxReviewRewrites : Nat
+  /-- Below this review score, a `warn` is treated as a `fail`. -/
+  minReviewScore : Nat
+  /-- Let the sentinel roll the conversation back to the last clean
+      checkpoint when replies keep failing.  See `LeanPrime.Agent.Sentinel`. -/
+  sentinelRollback : Bool
+  /-- Consecutive non-compliant turns before the run is halted.  0 disables
+      the streak ladder (the deadman and weight budget still apply). -/
+  haltAfterFailures : Nat
   deriving Inhabited
 
 /-- The root configuration object. -/

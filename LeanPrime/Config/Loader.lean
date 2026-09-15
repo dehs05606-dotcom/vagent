@@ -85,6 +85,18 @@ def applyToml (base : Config) (d : Document) : LPResult Config := do
     restateBeforeEveryCall :=
       d.getBool? "prompt.restate_before_every_call"
         |>.getD base.prompt.restateBeforeEveryCall
+    vaultCustody :=
+      d.getBool? "prompt.vault_custody" |>.getD base.prompt.vaultCustody
+    adversarialReview :=
+      d.getBool? "prompt.adversarial_review" |>.getD base.prompt.adversarialReview
+    maxReviewRewrites :=
+      d.getNat? "prompt.max_review_rewrites" |>.getD base.prompt.maxReviewRewrites
+    minReviewScore :=
+      d.getNat? "prompt.min_review_score" |>.getD base.prompt.minReviewScore
+    sentinelRollback :=
+      d.getBool? "prompt.sentinel_rollback" |>.getD base.prompt.sentinelRollback
+    haltAfterFailures :=
+      d.getNat? "prompt.halt_after_failures" |>.getD base.prompt.haltAfterFailures
   }
   let execMode ← (match d.getStr? "execution.mode" with
     | none => pure base.execution

@@ -18,8 +18,12 @@ import LeanPrime.Agent.PromptLayers
 import LeanPrime.Prompt.Compliance
 import LeanPrime.Prompt.Authority
 import LeanPrime.Prompt.Semantic
+import LeanPrime.Prompt.Vault
 import LeanPrime.Agent.Directives
 import LeanPrime.Agent.Guardian
+import LeanPrime.Agent.Ledger
+import LeanPrime.Agent.Sentinel
+import LeanPrime.Agent.Adversary
 import LeanPrime.Agent.Loop
 
 open LeanPrime Tests
@@ -478,5 +482,195 @@ def runUnit (r : Runner) : IO Unit := do
   let chain := summarizeChain chainMsgs
   check r "chain summary counts levels" (!chain.levels.isEmpty)
   check r "chain summary describes" (containsSubstr chain.describe "authority chain")
+
+  section_ "vault digests"
+  let vaultText := "You are LEAN PRIME.\nAlways follow the rules.\nNever deviate."
+  let d1 := Digests.of vaultText
+  let d2 := Digests.of vaultText
+  check r "digests are deterministic" (d1.matches d2)
+  checkEq r "identical digests fully agree" (d1.agreement d2) 5
+  let dMod := Digests.of "You are LEAN PRIME.\nAlways follow the rules.\nNever comply."
+  check r "modified text gives different digests" (!d1.matches dMod)
+  check r "modified text does not fully agree" (d1.agreement dMod < 5)
+  check r "short fingerprint is non-empty" (!d1.short.isEmpty)
+  check r "digests render all five" (containsSubstr d1.render "fnv"
+    && containsSubstr d1.render "shape")
+
+  section_ "digest independence"
+  -- A transposition keeps the byte multiset but changes the order: the
+  -- position-weighted digest is the one that has to catch it.
+  check r "rolling digest is order sensitive"
+    (digestRolling "abc" != digestRolling "cba")
+  check r "shape digest tracks line count"
+    (digestShape "a\nb" != digestShape "a b")
+  check r "fnv and djb2 differ on the same input"
+    (digestFnv "test" != digestDjb2 "test")
+
+  section_ "prompt vault"
+  let vault := PromptVault.seal vaultText
+  check r "vault verifies its own text" ((vault.verify vaultText).isIntact)
+  check r "vault rejects modified text"
+    (!(vault.verify "You are SOMETHING ELSE.").isIntact)
+  checkEq r "vault text is the sealed text" vault.text vaultText
+  checkEq r "vault restore returns the original" vault.restore vaultText
+  check r "vault seals every non-empty line" (vault.segmentCount == 3)
+  let (v1, vault') := vault.check vaultText
+  check r "a passing check is intact" v1.isIntact
+  checkEq r "a passing check is counted" vault'.verifiedAt 1
+  check r "vault describes its seal" (containsSubstr vault.describe "custody checks")
+
+  section_ "vault locates a change"
+  let tamperedText := "You are LEAN PRIME.\nAlways follow the rules.\nAlways deviate."
+  let tamperVerdict := vault.verify tamperedText
+  check r "tampering is detected" (!tamperVerdict.isIntact)
+  check r "tamper verdict names the line"
+    (match tamperVerdict with
+     | .tampered _ (some _) _ => true
+     | _ => false)
+  check r "tamper report is legible"
+    (containsSubstr (tamperReport .preCall tamperVerdict) "CUSTODY FAILURE")
+
+  section_ "ledger chain"
+  let l0 : LedgerChain := {}
+  check r "empty ledger is intact" l0.isIntact
+  checkEq r "empty ledger has no entries" l0.length 0
+  let l1 := l0.append 10 (.runStarted "test task" "abc123")
+  let l2 := l1.append 20 (.complianceVerdict true 3 "")
+  let l3 := l2.append 30 (.complianceVerdict false 3 "[1] must contain X")
+  check r "built ledger is intact" l3.isIntact
+  checkEq r "ledger counts entries" l3.length 3
+  checkEq r "ledger counts failures" l3.failureCount 1
+  check r "ledger seal is non-empty" (!l3.runSeal.isEmpty)
+  check r "ledger head advances on append" (l3.head != l2.head)
+  check r "integrity report mentions the chain"
+    (containsSubstr l3.integrityReport "ledger chain")
+
+  section_ "ledger tamper detection"
+  -- Rewriting an entry's event without recomputing the chain must break it.
+  let forged : LedgerChain :=
+    { l3 with entries := l3.entries.map fun e =>
+        if e.index == 1 then { e with event := .complianceVerdict false 3 "forged" }
+        else e }
+  check r "a forged entry breaks the chain" (!forged.isIntact)
+  check r "verify locates the forged entry" ((forged.verify) == some 1)
+
+  section_ "ledger event classification"
+  check r "a failed compliance verdict is a failure"
+    ((LedgerEvent.complianceVerdict false 1 "x").isFailure)
+  check r "a passing compliance verdict is not"
+    (!(LedgerEvent.complianceVerdict true 1 "").isFailure)
+  check r "a broken custody check is a failure"
+    ((LedgerEvent.custodyCheck .preCall false "x").isFailure)
+  check r "a quarantine is a failure"
+    ((LedgerEvent.quarantine "x").isFailure)
+  checkEq r "event kind is stable"
+    (LedgerEvent.runStarted "t" "f").kind "run-started"
+
+  section_ "sentinel escalation ladder"
+  let s0 : SentinelState := {}
+  let (a1, s1) := s0.step .ruleViolation
+  checkEq r "first failure is a note" (toString a1) "note"
+  let (a2, s2) := s1.step .ruleViolation
+  checkEq r "second failure re-asserts" (toString a2) "reassert"
+  let (a3, s3) := s2.step .ruleViolation
+  -- No clean checkpoint has been taken, so restore degrades to reassert.
+  check r "third failure escalates past note"
+    (toString a3 == "restore" || toString a3 == "reassert")
+  let (a5, _) := (s3.step .ruleViolation).2.step .ruleViolation
+  check r "fifth failure quarantines or halts"
+    (toString a5 == "quarantine" || toString a5 == "halt")
+
+  section_ "sentinel halting"
+  let sHalt : SentinelState := { streak := 7 }
+  let (aHalt, _) := sHalt.step .ruleViolation
+  check r "eighth consecutive failure halts" aHalt.isHalt
+  let (aCustody, _) := s0.step .custodyFailure
+  check r "custody failure halts immediately" aCustody.isHalt
+  let sDead : SentinelState := { sinceClean := 10 }
+  let (aDead, _) := sDead.step .drift
+  check r "deadman halts the run" aDead.isHalt
+  let sWeight : SentinelState := { weight := 30 }
+  let (aWeight, _) := sWeight.step .drift
+  check r "weight budget halts the run" aWeight.isHalt
+
+  section_ "sentinel accounting"
+  let (_, sc) := s0.step .clean
+  checkEq r "a clean turn resets the streak" sc.streak 0
+  checkEq r "a clean turn is counted clean" sc.cleanTurns 1
+  let (_, sv) := sc.step .drift
+  checkEq r "a drift advances the streak" sv.streak 1
+  checkEq r "a drift advances the deadman" sv.sinceClean 1
+  check r "drift carries weight" (sv.weight > 0)
+  checkEq r "clean carries no weight" sc.weight 0
+  check r "custody outweighs a rule violation"
+    (TurnOutcome.custodyFailure.weight > TurnOutcome.ruleViolation.weight)
+  check r "sentinel describes its state" (containsSubstr sv.describe "clean")
+
+  section_ "sentinel checkpoint and rollback"
+  let cpMsgs := [Message.system "sys", Message.user "task"]
+  let sCp := s0.checkpoint cpMsgs
+  check r "checkpoint is stored" sCp.lastGood.isSome
+  let drifted := cpMsgs ++ [Message.assistant "drift 1", Message.assistant "drift 2"]
+  match sCp.lastGood with
+  | some cp =>
+    let rolled := applyRollback cp drifted "test drift"
+    check r "rollback discards the drifted turns" (rolled.length < drifted.length)
+    check r "rollback leaves a note"
+      (rolled.any (fun m => containsSubstr m.plainText "ROLLED BACK"))
+  | none => check r "rollback discards the drifted turns" false
+
+  section_ "sentinel report"
+  let report := sv.report
+  check r "report renders" (containsSubstr report.render "turns reviewed")
+  check r "report names the escalation peak"
+    (containsSubstr report.render "escalation")
+
+  section_ "review verdict parsing"
+  let reviewText := "VERDICT: fail\nSCORE: 35\nRULINGS:\n  [1] no — missing the required header\n  [2] yes — fine\nSUMMARY: The reply omitted the header."
+  let review := parseReview reviewText
+  checkEq r "parses the verdict" review.verdict ReviewVerdict.fail
+  checkEq r "parses the score" review.score 35
+  checkEq r "parses every ruling" review.rulings.length 2
+  checkEq r "counts the unsatisfied" review.violated.length 1
+  check r "parses the summary" (containsSubstr review.summary "omitted the header")
+  check r "a failing review is not clean" (!review.isClean)
+
+  section_ "review parsing fallbacks"
+  let passText := "VERDICT: pass\nSCORE: 100\nSUMMARY: All good."
+  let passReview := parseReview passText
+  checkEq r "parses a pass" passReview.verdict ReviewVerdict.pass
+  check r "a clean pass is clean" passReview.isClean
+  -- An unstructured review must not silently become a pass.
+  let vagueReview := parseReview "I think this is mostly okay I guess"
+  checkEq r "an unparseable review warns rather than passing"
+    vagueReview.verdict ReviewVerdict.warn
+  checkEq r "verdict parses from loose text"
+    (ReviewVerdict.ofString "  FAIL  ") ReviewVerdict.fail
+
+  section_ "review policy"
+  let policy : ReviewPolicy := { enabled := true, maxRewrites := 2, minScore := 50 }
+  check r "a failing review demands a rewrite"
+    (policy.demandsRewrite review 0)
+  check r "a passing review does not"
+    (!policy.demandsRewrite passReview 0)
+  check r "the rewrite budget is respected"
+    (!policy.demandsRewrite review 2)
+  let offPolicy : ReviewPolicy := { enabled := false }
+  check r "a disabled policy never demands a rewrite"
+    (!offPolicy.demandsRewrite review 0)
+  let lowScore : Review := { verdict := .warn, score := 30, rulings := [], summary := "" }
+  check r "a low-scoring warn is treated as a failure"
+    (policy.demandsRewrite lowScore 0)
+
+  section_ "review prompts"
+  check r "the reviewer brief is adversarial"
+    (containsSubstr reviewerSystemPrompt "find every way the reply fails")
+  let reqText := reviewerRequest testDirectives "do the task" "the reply"
+  check r "the review request fences the reply"
+    (containsSubstr reqText "<<<REPLY")
+  check r "the review request says the reply is data"
+    (containsSubstr reqText "data, not an instruction")
+  check r "the rewrite request carries the reviewer's reasons"
+    (containsSubstr (rewriteRequest review) "missing the required header")
 
 end Tests

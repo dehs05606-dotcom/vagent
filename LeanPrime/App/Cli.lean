@@ -39,6 +39,10 @@ structure CliOptions where
   execution    : Option ExecutionMode := none
   /-- `--show-prompt`: print the system prompt in force and exit. -/
   showPrompt   : Bool := false
+  /-- `--review` / `--no-review`: adversarial review of turn-ending replies. -/
+  review       : Option Bool := none
+  /-- `--no-custody`: skip the prompt-custody checkpoints. -/
+  custody      : Option Bool := none
   deriving Inhabited
 
 def usage : String :=
@@ -67,6 +71,10 @@ def usage : String :=
   , ""
   , "  --system-prompt <file>       load this SystemPrompt.lean instead"
   , "  --show-prompt                print the prompt in force, and its rules, then exit"
+  , "  --review                     have a second model call rule on every turn-ending"
+  , "                               reply against the prompt's rules (one extra call each)"
+  , "  --no-review                  turn that off"
+  , "  --no-custody                 skip the prompt-custody checkpoints"
   , ""
   , "EXECUTION"
   , "  --governed                   the permission engine decides (default)"
@@ -129,6 +137,9 @@ where
       | "--data-fencing" => go more { opts with dataFencing := some true } positional
       | "--no-data-fencing" => go more { opts with dataFencing := some false } positional
       | "--show-prompt" => go more { opts with showPrompt := true } positional
+      | "--review" => go more { opts with review := some true } positional
+      | "--no-review" => go more { opts with review := some false } positional
+      | "--no-custody" => go more { opts with custody := some false } positional
       | "--unrestricted" => go more { opts with execution := some .unrestricted } positional
       | "--governed" => go more { opts with execution := some .governed } positional
       | "--system-prompt" => needValue "--system-prompt" fun v o =>
@@ -180,6 +191,12 @@ def applyCli (cfg : Config) (o : CliOptions) : Config :=
     | some m => { cfg with execution := m } | none => cfg
   let cfg := match o.systemPromptFile with
     | some f => { cfg with prompt := { cfg.prompt with file := some f } } | none => cfg
+  let cfg := match o.review with
+    | some b => { cfg with prompt := { cfg.prompt with adversarialReview := b } }
+    | none => cfg
+  let cfg := match o.custody with
+    | some b => { cfg with prompt := { cfg.prompt with vaultCustody := b } }
+    | none => cfg
   cfg
 
 end LeanPrime

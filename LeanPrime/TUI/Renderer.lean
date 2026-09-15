@@ -150,6 +150,35 @@ def mkRenderer (color : Bool) (ui : UiConfig) (modelName : String)
         line (style c grey s!"  ⚓ anchor injected: {reason}")
       | .distanceTriggered tokens threshold =>
         line (style c yellow s!"  ↻ instruction distance: {tokens}/{threshold} tokens — re-asserting")
+      | .custodyChecked cp intact detail =>
+        bar.update (fun m => { m with custodyIntact := intact })
+        if intact then
+          if !ui.compact then
+            line (style c grey s!"  ⛨ custody {cp}: intact")
+        else
+          line (style c red s!"  ⛨ CUSTODY FAILED at {cp} — {detail}")
+      | .reviewCompleted verdict score unsat =>
+        bar.update (fun m => { m with reviewScore := some score })
+        let mark := if verdict == "pass" then style c green "✓"
+          else if verdict == "warn" then style c yellow "–"
+          else style c red "✗"
+        let tail := if unsat == 0 then "" else s!" · {unsat} unsatisfied"
+        line s!"  {mark} review: {verdict} ({score}/100){style c grey tail}"
+      | .reviewRewrite attempt summary =>
+        line (style c yellow s!"  ↻ rewrite requested (attempt {attempt})")
+        line (style c grey s!"    {truncate summary 140}")
+      | .sentinelAction action reason =>
+        bar.update (fun m => { m with sentinelState := action })
+        let col := if action == "halt" then red
+          else if action == "quarantine" || action == "restore" then yellow
+          else grey
+        line (style c col s!"  ⚑ sentinel {action} — {truncate reason 120}")
+      | .conversationRolledBack discarded toTurn =>
+        line (style c yellow s!"  ⏮ rolled back {discarded} turn(s) to checkpoint {toTurn}")
+      | .ledgerSealed entries failures sealValue intact =>
+        let state := if intact then style c green "intact" else style c red "BROKEN"
+        line (style c grey s!"  ledger: {entries} entries, {failures} failure(s), seal {sealValue}"
+              ++ style c grey " · chain " ++ state)
       | .budgetWarning what used limit =>
         line (style c yellow s!"  ! {what} reached ({used}/{limit})")
       | .errorOccurred err_ =>
