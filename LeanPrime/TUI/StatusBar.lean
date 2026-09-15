@@ -59,6 +59,9 @@ structure StatusModel where
   sentinelState : String := ""
   /-- Most recent adversarial review score, when review is on. -/
   reviewScore : Option Nat := none
+  /-- Behavioural rules compiled from the prompt, and calls they blocked. -/
+  behaviorRules : Nat := 0
+  interlockRefusals : Nat := 0
   deriving Inhabited
 
 /-- Terminal width, best effort.  `COLUMNS` is exported by most shells; the
@@ -102,7 +105,12 @@ def StatusModel.lines (m : StatusModel) (width : Nat) : String × String :=
     s!"{m.toolCount} tools · {formatTokens m.tokens}"
   let ruleText :=
     if m.directives == 0 then "no directives"
-    else s!"{m.directives} rules · {m.enforced} enforced"
+    else
+      let behaviour :=
+        if m.behaviorRules == 0 then ""
+        else if m.interlockRefusals == 0 then s!" · {m.behaviorRules} behaviour"
+        else s!" · {m.behaviorRules} behaviour ({m.interlockRefusals} blocked)"
+      s!"{m.directives} rules · {m.enforced} enforced{behaviour}"
   let compText :=
     if m.compliancePasses + m.complianceFailures == 0 then ""
     else

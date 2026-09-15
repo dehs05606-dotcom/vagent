@@ -64,6 +64,12 @@ inductive AgentEvent where
   | conversationRolledBack (discarded : Nat) (toTurn : Nat)
   /-- The run's forensic ledger was sealed at the end. -/
   | ledgerSealed (entries : Nat) (failures : Nat) (sealValue : String) (intact : Bool)
+  /-- The interlock refused a tool call before it ran. -/
+  | interlockRefused (tool : String) (rules : String)
+  /-- The interlock permitted a call but flagged it. -/
+  | interlockFlagged (tool : String) (rules : String)
+  /-- Behavioural rules were unsatisfied when the run tried to finish. -/
+  | behaviorUnsatisfied (count : Nat) (detail : String)
   | budgetWarning (what : String) (used : Nat) (limit : Nat)
   | errorOccurred (e : LPError)
   | notice (text : String)
@@ -165,6 +171,13 @@ def toJson : AgentEvent → Json
        ("entries", .num (JsonNumber.fromNat entries)),
        ("failures", .num (JsonNumber.fromNat failures)),
        ("seal", .str sealValue), ("intact", .bool intact)]
+  | .interlockRefused tool rules => Json.mkObj
+      [("event", .str "interlock_refused"), ("tool", .str tool), ("rules", .str rules)]
+  | .interlockFlagged tool rules => Json.mkObj
+      [("event", .str "interlock_flagged"), ("tool", .str tool), ("rules", .str rules)]
+  | .behaviorUnsatisfied n detail => Json.mkObj
+      [("event", .str "behavior_unsatisfied"),
+       ("count", .num (JsonNumber.fromNat n)), ("detail", .str detail)]
   | .budgetWarning w u l => Json.mkObj
       [("event", .str "budget_warning"), ("what", .str w),
        ("used", .num (JsonNumber.fromNat u)), ("limit", .num (JsonNumber.fromNat l))]

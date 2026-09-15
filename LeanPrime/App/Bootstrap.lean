@@ -42,6 +42,7 @@ def buildSink (cfg : Config) (opts : CliOptions) (interactive : Bool)
     enforced := prompts.rules.length
     custodyFingerprint :=
       if cfg.prompt.vaultCustody then (Digests.of prompts.render).short else ""
+    behaviorRules := (compileBehaviorRules prompts.directives).length
     mode := cfg.execution.toString }
   if opts.quiet then mkQuietSink
   else match cfg.output with

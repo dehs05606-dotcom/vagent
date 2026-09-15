@@ -24,11 +24,228 @@ import LeanPrime.Agent.Guardian
 import LeanPrime.Agent.Ledger
 import LeanPrime.Agent.Sentinel
 import LeanPrime.Agent.Adversary
+import LeanPrime.Agent.Trace
+import LeanPrime.Prompt.Predicate
+import LeanPrime.Prompt.Compiler
+import LeanPrime.Agent.Interlock
 import LeanPrime.Agent.Loop
 
-open LeanPrime Tests
+open LeanPrime Tests Lean
 
 namespace Tests
+
+/-- Behavioural enforcement: the action trace, the predicate engine, the
+    directive compiler and the interlock. -/
+def runBehavior (r : Runner) : IO Unit := do
+  section_ "action trace"
+  let mkAction (seq : Nat) (tool : String) (path : Option String) : ActionRecord :=
+    { seq := seq, tool := tool, path := path, ok := true }
+  let t0 : ActionTrace := {}
+  check r "empty trace is empty" t0.isEmpty
+  let t1 := t0.append (mkAction 0 "read_file" (some "a.lean"))
+  let t2 := t1.append (mkAction 1 "edit_file" (some "a.lean"))
+  checkEq r "trace grows on append" t2.length 2
+  check r "a read is recorded" (t2.wasEverRead "a.lean")
+  check r "an unread path is not" (!t2.wasEverRead "b.lean")
+  check r "read before edit is seen" (t2.wasReadBefore "a.lean" 1)
+  check r "a later read does not count as before" (!t2.wasReadBefore "a.lean" 0)
+  checkEq r "edits are counted" t2.edits.length 1
+  checkEq r "reads are counted" t2.reads.length 1
+
+  section_ "trace: edited without reading"
+  let tUnread := t0.append (mkAction 0 "edit_file" (some "never-read.lean"))
+  checkEq r "an unread edit is caught" tUnread.editedUnread.length 1
+  check r "a read-then-edit is clean" t2.editedUnread.isEmpty
+  -- A fresh whole-file write has nothing to have read.
+  let tWrite := t0.append (mkAction 0 "write_file" (some "new.lean"))
+  check r "a fresh write is not an unread edit" tWrite.editedUnread.isEmpty
+
+  section_ "trace: verification ordering"
+  check r "a trace with no edits verifies vacuously" t0.verifiedSinceLastEdit
+  check r "an edit with no build does not verify" (!t2.verifiedSinceLastEdit)
+  let tBuilt := t2.append
+    { seq := 2, tool := "run_shell", command := some "lake build", ok := true }
+  check r "a build after the edit verifies" tBuilt.verifiedSinceLastEdit
+  let tEditAfter := tBuilt.append (mkAction 3 "edit_file" (some "a.lean"))
+  check r "an edit after the build un-verifies" (!tEditAfter.verifiedSinceLastEdit)
+  check r "a build command is recognised"
+    ({ seq := 0, tool := "run_shell", command := some "npm run test" : ActionRecord }).isVerification
+  check r "an unrelated command is not"
+    (!({ seq := 0, tool := "run_shell", command := some "echo hi" : ActionRecord }).isVerification)
+
+  section_ "trace: diff review"
+  let tDiff := t2.append
+    { seq := 2, tool := "run_shell", command := some "git diff", ok := true }
+  check r "a diff after the edit counts" tDiff.diffReviewedSinceLastEdit
+  check r "no diff after the edit does not" (!t2.diffReviewedSinceLastEdit)
+
+  section_ "predicate: read before edit"
+  let rbeRule : BehaviorRule :=
+    { directiveId := 2, predicate := .readBeforeEdit, level := .warn }
+  check r "editing an unread file violates"
+    ((checkProposed rbeRule t0 { tool := "edit_file", path := some "x.lean" }).isSome)
+  check r "editing a read file does not"
+    ((checkProposed rbeRule t1 { tool := "edit_file", path := some "a.lean" }).isNone)
+  check r "reading is never a violation"
+    ((checkProposed rbeRule t0 { tool := "read_file", path := some "x.lean" }).isNone)
+  check r "a fresh write is exempt"
+    ((checkProposed rbeRule t0 { tool := "write_file", path := some "x.lean" }).isNone)
+  check r "final check catches the unread edit"
+    ((checkFinal rbeRule tUnread).isSome)
+  check r "final check passes a clean trace"
+    ((checkFinal rbeRule t2).isNone)
+
+  section_ "predicate: test suppression"
+  let suppressRule : BehaviorRule :=
+    { directiveId := 5
+      predicate := .neverWriteMatching testSuppressionMarkers "a test-suppression marker"
+      level := .block }
+  check r "writing a skip marker violates"
+    ((checkProposed suppressRule t0
+        { tool := "edit_file", path := some "t.js", written := some "it.skip('x', ...)" }).isSome)
+  check r "writing a pytest skip violates"
+    ((checkProposed suppressRule t0
+        { tool := "edit_file", path := some "t.py"
+          written := some "@pytest.mark.skip(reason='flaky')" }).isSome)
+  check r "writing ordinary code does not"
+    ((checkProposed suppressRule t0
+        { tool := "edit_file", path := some "a.ts"
+          written := some "export function add(a, b) { return a + b }" }).isNone)
+  check r "a call with nothing written is ignored"
+    ((checkProposed suppressRule t0 { tool := "read_file", path := some "a.ts" }).isNone)
+
+  section_ "predicate: verify after edit"
+  let vaeRule : BehaviorRule :=
+    { directiveId := 4, predicate := .verifyAfterEdit, level := .warn }
+  check r "an unverified edit fails the final check"
+    ((checkFinal vaeRule t2).isSome)
+  check r "a verified edit passes" ((checkFinal vaeRule tBuilt).isNone)
+  check r "a run with no edits passes" ((checkFinal vaeRule t0).isNone)
+  check r "verify-after-edit cannot be decided in advance"
+    ((checkProposed vaeRule t2 { tool := "edit_file", path := some "a.lean" }).isNone)
+
+  section_ "predicate: call limits"
+  let limitRule : BehaviorRule :=
+    { directiveId := 9, predicate := .maxCallsOf "run_shell" 1, level := .block }
+  let tShell := t0.append { seq := 0, tool := "run_shell", command := some "ls", ok := true }
+  check r "the first call is under the limit"
+    ((checkProposed limitRule t0 { tool := "run_shell" }).isNone)
+  check r "the second call is over it"
+    ((checkProposed limitRule tShell { tool := "run_shell" }).isSome)
+  check r "a different tool is unaffected"
+    ((checkProposed limitRule tShell { tool := "read_file" }).isNone)
+
+  section_ "predicate enforcement levels"
+  checkEq r "test suppression blocks"
+    (BehaviorPredicate.neverWriteMatching [] "x").defaultLevel Enforcement.block
+  checkEq r "a forbidden tool blocks"
+    (BehaviorPredicate.neverCallTool "x").defaultLevel Enforcement.block
+  checkEq r "read-before-edit only warns"
+    BehaviorPredicate.readBeforeEdit.defaultLevel Enforcement.warn
+  checkEq r "verify-after-edit only warns"
+    BehaviorPredicate.verifyAfterEdit.defaultLevel Enforcement.warn
+
+  section_ "directive compiler"
+  let compiled := compileBehaviorRules
+    (extractDirectives "- Always read a file before editing it.\n- Always run the build and the tests after changing code.\n- Never disable, skip or delete a test to make it pass.\n- Always review the diff before reporting.")
+  check r "the compiler produces rules" (!compiled.isEmpty)
+  check r "read-before-edit compiles"
+    (compiled.any fun x => match x.predicate with | .readBeforeEdit => true | _ => false)
+  check r "verify-after-edit compiles"
+    (compiled.any fun x => match x.predicate with | .verifyAfterEdit => true | _ => false)
+  check r "test suppression compiles"
+    (compiled.any fun x => match x.predicate with | .neverWriteMatching _ _ => true | _ => false)
+  check r "diff review compiles"
+    (compiled.any fun x => match x.predicate with
+      | .reviewDiffBeforeFinish => true | _ => false)
+
+  section_ "compiler does not over-reach"
+  -- A rule needing a model of intent must not compile to anything.
+  let vague := extractDirectives "- Never refactor code the task did not ask you to touch."
+  check r "an intent rule compiles to nothing"
+    ((compileBehaviorRules vague).isEmpty)
+  check r "and is reported as uncompiled"
+    (!(uncompiledDirectives vague).isEmpty)
+  -- "delete the build directory" shares words with the test rule but is not it.
+  let unrelated := extractDirectives "- Never delete the build directory by hand."
+  check r "a similar-sounding rule does not become test suppression"
+    (!(compileBehaviorRules unrelated).any fun x =>
+      match x.predicate with
+      | .neverWriteMatching _ label => label == "a test-suppression marker"
+      | _ => false)
+
+  section_ "compilation report"
+  let creport := compileReport
+    (extractDirectives "- Always read a file before editing it.\n- Never refactor unrelated code.")
+  check r "the report lists enforced rules" (!creport.rules.isEmpty)
+  check r "the report lists what did not compile" (!creport.uncompiled.isEmpty)
+  check r "the report says so plainly"
+    (containsSubstr creport.describe "not mechanically checkable")
+
+  section_ "interlock"
+  let ilock := InterlockState.ofDirectives
+    (extractDirectives "- Always read a file before editing it.\n- Never disable, skip or delete a test to make it pass.")
+  check r "the interlock is active with rules" ilock.isActive
+  check r "it has at least one blocking rule" (ilock.blockingRules > 0)
+  check r "an empty prompt leaves it inactive"
+    (!(InterlockState.ofDirectives []).isActive)
+
+  section_ "interlock verdicts"
+  checkEq r "no rules means clear"
+    (toString (interlockCheck [] t0 { tool := "edit_file" })) "clear"
+  check r "no rules permits execution"
+    ((interlockCheck [] t0 { tool := "edit_file" }).allowsExecution)
+  let blockVerdict := interlockCheck [suppressRule] t0
+    { tool := "edit_file", path := some "t.js", written := some "it.skip('x')" }
+  checkEq r "a blocking rule refuses" (toString blockVerdict) "refused"
+  check r "a refusal stops execution" (!blockVerdict.allowsExecution)
+  let warnVerdict := interlockCheck [rbeRule] t0
+    { tool := "edit_file", path := some "unread.lean" }
+  checkEq r "a warning rule flags" (toString warnVerdict) "flagged"
+  check r "a flag still permits execution" warnVerdict.allowsExecution
+  check r "a clear call is clear"
+    ((interlockCheck [rbeRule, suppressRule] t1
+       { tool := "edit_file", path := some "a.lean"
+         written := some "normal code" }).allowsExecution)
+
+  section_ "interlock messages"
+  check r "a refusal names the rule"
+    (containsSubstr (refusalResult blockVerdict.violations).content "REFUSED")
+  check r "a refusal says it did not run"
+    (containsSubstr (refusalResult blockVerdict.violations).content "NOT performed")
+  check r "a refusal is not an ok result"
+    (!(refusalResult blockVerdict.violations).ok)
+  check r "a flag note is legible"
+    (containsSubstr (flagNote warnVerdict.violations) "flags this action")
+
+  section_ "interlock tracking"
+  let tracked := (ilock.observe "read_file" (Json.mkObj [("path", .str "a.lean")]) true 0)
+  checkEq r "observing grows the trace" tracked.trace.length 1
+  check r "the observed path is recorded" (tracked.trace.wasEverRead "a.lean")
+  let tracked2 := tracked.observe "edit_file" (Json.mkObj [("path", .str "a.lean")]) true 1
+  check r "a read-then-edit leaves no final violation"
+    ((checkAllFinal [rbeRule] tracked2.trace).isEmpty)
+  let unreadEdit := ilock.observe "edit_file" (Json.mkObj [("path", .str "z.lean")]) true 0
+  check r "an unread edit leaves a final violation"
+    (!(checkAllFinal [rbeRule] unreadEdit.trace).isEmpty)
+  check r "the final message tells the model to do the work"
+    (containsSubstr (finalViolationMessage (checkAllFinal [rbeRule] unreadEdit.trace))
+      "against your description of them")
+
+  section_ "argument normalisation"
+  check r "path is read from `path`"
+    (pathOfArgs (Json.mkObj [("path", .str "a.lean")]) == some "a.lean")
+  check r "path is read from `file_path`"
+    (pathOfArgs (Json.mkObj [("file_path", .str "b.lean")]) == some "b.lean")
+  check r "written text is read from `content`"
+    (writtenOfArgs (Json.mkObj [("content", .str "hello")]) == some "hello")
+  check r "written text is read from `new_string`"
+    (writtenOfArgs (Json.mkObj [("new_string", .str "world")]) == some "world")
+  check r "a command is read from `command`"
+    (commandOfArgs (Json.mkObj [("command", .str "ls -la")]) == some "ls -la")
+  check r "absent keys give none"
+    ((pathOfArgs (Json.mkObj [("other", .str "x")])).isNone)
+
 
 def runUnit (r : Runner) : IO Unit := do
   section_ "util"
@@ -672,5 +889,7 @@ def runUnit (r : Runner) : IO Unit := do
     (containsSubstr reqText "data, not an instruction")
   check r "the rewrite request carries the reviewer's reasons"
     (containsSubstr (rewriteRequest review) "missing the required header")
+
+  runBehavior r
 
 end Tests

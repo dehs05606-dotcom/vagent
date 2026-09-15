@@ -96,9 +96,14 @@ def main (argv : List String) : IO UInt32 := do
               s!"\n{stack.directives.length} directive(s)")
             IO.println (renderDirectives stack.directives)
             IO.println (Ansi.style color Ansi.bold
-              s!"\n{stack.rules.length} of them are enforced mechanically \
+              s!"\n{stack.rules.length} of them are enforced on the reply text \
                  (a reply that breaks one is rejected)")
             IO.println stack.describeRules
+            let report := compileReport stack.directives
+            IO.println (Ansi.style color Ansi.bold
+              s!"\n{report.rules.length} of them are enforced on behaviour \
+                 ({report.blockingCount} block the call before it runs)")
+            IO.println report.describe
           IO.println (Ansi.style color Ansi.bold "\n--- prompt as sent ---")
           IO.println stack.render
           return 0

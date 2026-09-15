@@ -179,6 +179,15 @@ def mkRenderer (color : Bool) (ui : UiConfig) (modelName : String)
         let state := if intact then style c green "intact" else style c red "BROKEN"
         line (style c grey s!"  ledger: {entries} entries, {failures} failure(s), seal {sealValue}"
               ++ style c grey " · chain " ++ state)
+      | .interlockRefused tool rules =>
+        bar.update (fun m => { m with interlockRefusals := m.interlockRefusals + 1 })
+        line (style c red s!"  ⛔ blocked before execution: {tool}")
+        line (style c grey s!"    {truncate rules 150}")
+      | .interlockFlagged tool rules =>
+        line (style c yellow s!"  ⚠ flagged: {tool}" ++ style c grey s!"  {truncate rules 120}")
+      | .behaviorUnsatisfied n detail =>
+        line (style c yellow s!"  ⊘ {n} behaviour rule(s) unsatisfied — cannot report done")
+        line (style c grey s!"    {truncate detail 160}")
       | .budgetWarning what used limit =>
         line (style c yellow s!"  ! {what} reached ({used}/{limit})")
       | .errorOccurred err_ =>

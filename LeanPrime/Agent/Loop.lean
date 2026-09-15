@@ -25,6 +25,7 @@ import LeanPrime.Agent.PromptLayers
 import LeanPrime.Agent.Guardian
 import LeanPrime.Agent.Sentinel
 import LeanPrime.Agent.Adversary
+import LeanPrime.Agent.Interlock
 import LeanPrime.Context.Manager
 import LeanPrime.Model.Provider
 
@@ -162,6 +163,13 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
       maxRewrites := pcfg.maxReviewRewrites
       minScore := pcfg.minReviewScore }
   let mut reviewRewrites := 0
+
+  -- Compile the prompt's behavioural rules.  These are the ones no string
+  -- comparison decides: they are checked against the trace of what the
+  -- agent actually did, and the blocking ones are checked *before* a call
+  -- runs rather than after.
+  let mut interlock := InterlockState.ofDirectives env.prompts.directives
+  let mut behaviorChecked := false
 
   let elapsed : IO Nat := do
     let now ← IO.monoMsNow
@@ -452,7 +460,42 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
             env.events.emit (.planStepChanged step.id .active step.description)
         for call in resp.toolCalls do
           st := { st with budget := { st.budget with toolCalls := st.budget.toolCalls + 1 } }
+
+          -- Interlock: rule on the call against the prompt's behavioural
+          -- rules *before* it runs.  A blocked call never reaches the
+          -- permission engine and never executes; the model is handed a
+          -- tool result saying which rule stopped it and what to do first.
+          let callArgs := (parseArguments call.arguments).toOption.getD (Json.mkObj [])
+          let proposed := proposedOf call.name callArgs
+          let verdict :=
+            if interlock.isActive then interlockCheck interlock.rules interlock.trace proposed
+            else .clear
+          let ims ← elapsed
+
+          if !verdict.allowsExecution then
+            interlock := interlock.noteRefusal
+            let vs := verdict.violations
+            env.events.emit (.interlockRefused call.name verdict.summary)
+            ledger := ledger.append ims
+              (.escalation "interlock" "refused" verdict.summary)
+            st := st.addMessage
+              (Message.toolResult call.id call.name (refusalResult vs).content)
+            continue
+
           let res ← executeCall execEnv call
+          interlock := interlock.observe call.name callArgs res.ok ims
+
+          if let .flagged vs := verdict then
+            interlock := interlock.noteFlag
+            env.events.emit (.interlockFlagged call.name verdict.summary)
+            ledger := ledger.append ims
+              (.guardianVerdict "flag" "behaviour" verdict.summary)
+            st := st.addMessage
+              (Message.toolResult call.id call.name (res.content ++ flagNote vs))
+            if let some p := touchedPath? call.name res then
+              st := st.noteFile p
+            continue
+
           if let some p := touchedPath? call.name res then
             st := st.noteFile p
           -- Injection shield: detect prompt-injection patterns in tool output
@@ -489,6 +532,23 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
           "You have not called any tools yet. Stop describing the work and start doing it: \
            make your first tool call now.")
         continue
+
+      -- Behavioural gate.  The prompt's rules about *how* the work is done
+      -- are checked against the trace of what actually happened, not against
+      -- the model's account of it.  Asked once: the point is to surface
+      -- missing work at the moment it matters, not to loop.
+      if interlock.isActive && !behaviorChecked then
+        let unmet := interlock.finalViolations
+        if !unmet.isEmpty then
+          behaviorChecked := true
+          let bms ← elapsed
+          ledger := ledger.append bms (.complianceVerdict false unmet.length
+            (String.intercalate "; " (unmet.map BehaviorViolation.describe)))
+          env.events.emit (.behaviorUnsatisfied unmet.length
+            (String.intercalate "; " (unmet.map BehaviorViolation.describe)))
+          st := st.addMessage
+            { Message.user (finalViolationMessage unmet) with pinned := false }
+          continue
 
       -- Adversarial review: hand the reply to a fresh model call, with the
       -- directives and an explicitly adversarial brief, and let it rule.
