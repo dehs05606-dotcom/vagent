@@ -32,13 +32,11 @@ private def executeTask (cfg : Config) (opts : CliOptions) (task : String)
         none (some s!"export {cfg.provider.apiKeyEnv}=… , or run `lean-prime --doctor`")))
       return 2
   let interactive ← (← IO.getStdin).isTty
-  let events ← buildSink cfg opts interactive
   let registry := Registry.forMode cfg.approval
-  let isGit ← Tools.isGitRepo cfg.workspace
-  let kind ← Tools.detectProject cfg.workspace
-  let prompts ← match ← buildPrompts cfg opts kind.toString isGit registry.names with
+  let prompts ← match ← buildPrompts cfg registry task with
     | .error e => (← IO.getStderr).putStrLn (LPError.render e); return 2
     | .ok p => pure p
+  let events ← buildSink cfg opts interactive prompts
   let env ← buildRunEnv cfg apiKey events prompts interactive
   let env := if priorTurns.isEmpty then env
              else { env with pollSteer := pure [] }
@@ -79,20 +77,26 @@ def main (argv : List String) : IO UInt32 := do
       -- when the agent is not behaving as told.
       if opts.showPrompt then
         let registry := Registry.forMode cfg.approval
-        let isGit ← Tools.isGitRepo cfg.workspace
-        let kind ← Tools.detectProject cfg.workspace
-        match ← buildPrompts cfg opts kind.toString isGit registry.names with
+        match ← buildPrompts cfg registry "(no task)" with
         | .error e => (← IO.getStderr).putStrLn (LPError.render e); return 2
         | .ok stack =>
-          IO.println (Ansi.style color Ansi.bold "layers in force (highest authority first)")
+          IO.println (Ansi.style color Ansi.bold "system prompt in force")
           IO.println (stack.describe)
+          if !stack.unknownVars.isEmpty then
+            IO.println (Ansi.style color Ansi.yellow
+              s!"\nwarning: the prompt uses {stack.unknownVars.length} unknown \
+                 placeholder(s); they are left as written")
           if stack.directives.isEmpty then
-            IO.println (Ansi.style color Ansi.grey "\nno operator directives extracted")
+            IO.println (Ansi.style color Ansi.grey "\nno directives extracted")
           else
             IO.println (Ansi.style color Ansi.bold
-              s!"\n{stack.directives.length} operator directive(s)")
+              s!"\n{stack.directives.length} directive(s)")
             IO.println (renderDirectives stack.directives)
-          IO.println (Ansi.style color Ansi.bold "\n--- assembled system prompt ---")
+            IO.println (Ansi.style color Ansi.bold
+              s!"\n{stack.rules.length} of them are enforced mechanically \
+                 (a reply that breaks one is rejected)")
+            IO.println stack.describeRules
+          IO.println (Ansi.style color Ansi.bold "\n--- prompt as sent ---")
           IO.println stack.render
           return 0
       match opts.command with

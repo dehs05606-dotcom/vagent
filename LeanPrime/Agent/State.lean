@@ -281,6 +281,9 @@ structure AgentState where
   /-- Whether the operator's directives have been put to the model for a
       closing account.  Asked once per run. -/
   adherenceChecked : Bool := false
+  /-- Consecutive replies rejected for breaking a rule from the system
+      prompt.  Reset on the first compliant reply. -/
+  complianceRetries : Nat := 0
   cancelled : Bool := false
   deriving Inhabited
 

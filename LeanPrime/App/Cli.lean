@@ -31,18 +31,13 @@ structure CliOptions where
   maxIterations : Option Nat := none
   noColor      : Bool := false
   quiet        : Bool := false
-  /-- `--system-prompt <file>`: a file whose contents become the system prompt. -/
+  /-- `--system-prompt <file>`: which copy of `SystemPrompt.lean` to load. -/
   systemPromptFile : Option System.FilePath := none
-  /-- `--system-prompt-text <text>`: an inline system prompt. -/
-  systemPromptText : Option String := none
-  /-- `--append-system-prompt <text>`: extra instructions after the rest. -/
-  appendSystemPrompt : Option String := none
-  promptMode   : Option PromptMode := none
-  /-- `--no-project-prompt`: ignore LEANPRIME.md / AGENTS.md / CLAUDE.md. -/
-  noProjectPrompt : Bool := false
   /-- `--data-fencing`: mark external material as data rather than instruction. -/
   dataFencing  : Option Bool := none
-  /-- `--show-prompt`: print the assembled system prompt and exit. -/
+  /-- `--unrestricted` / `--governed`: what governs the agent's actions. -/
+  execution    : Option ExecutionMode := none
+  /-- `--show-prompt`: print the system prompt in force and exit. -/
   showPrompt   : Bool := false
   deriving Inhabited
 
@@ -66,14 +61,17 @@ def usage : String :=
   , "  --workspace <path>      workspace root (default: current directory)"
   , "  --approval <mode>       auto | ask | read-only | yolo"
   , ""
-  , "SYSTEM PROMPT  (your instructions outrank the built-in ones)"
-  , "  --system-prompt <file>       use this file as the system prompt"
-  , "  --system-prompt-text <text>  use this text as the system prompt"
-  , "  --append-system-prompt <t>   add instructions after everything else"
-  , "  --prompt-mode <mode>         replace | prepend | append  (default: prepend)"
-  , "                               replace = your text IS the system prompt"
-  , "  --no-project-prompt          ignore LEANPRIME.md / AGENTS.md / CLAUDE.md"
-  , "  --show-prompt                print the assembled prompt and exit"
+  , "SYSTEM PROMPT"
+  , "  The entire system prompt is SystemPrompt.lean. There is no other source:"
+  , "  nothing is prepended, appended or merged in from anywhere in the code."
+  , ""
+  , "  --system-prompt <file>       load this SystemPrompt.lean instead"
+  , "  --show-prompt                print the prompt in force, and its rules, then exit"
+  , ""
+  , "EXECUTION"
+  , "  --governed                   the permission engine decides (default)"
+  , "  --unrestricted               nothing vetoes the prompt: no approval prompts,"
+  , "                               no deny list, no workspace containment"
   , "  --data-fencing               mark file and command output as data, not instruction"
   , ""
   , "  --json                  emit one JSON event per line instead of a transcript"
@@ -128,21 +126,13 @@ where
       | "--json" => go more { opts with output := some .json } positional
       | "--plain" => go more { opts with output := some .plain, noColor := true } positional
       | "--no-color" => go more { opts with noColor := true } positional
-      | "--no-project-prompt" => go more { opts with noProjectPrompt := true } positional
       | "--data-fencing" => go more { opts with dataFencing := some true } positional
       | "--no-data-fencing" => go more { opts with dataFencing := some false } positional
       | "--show-prompt" => go more { opts with showPrompt := true } positional
+      | "--unrestricted" => go more { opts with execution := some .unrestricted } positional
+      | "--governed" => go more { opts with execution := some .governed } positional
       | "--system-prompt" => needValue "--system-prompt" fun v o =>
           .ok { o with systemPromptFile := some (System.FilePath.mk v) }
-      | "--system-prompt-text" => needValue "--system-prompt-text" fun v o =>
-          .ok { o with systemPromptText := some v }
-      | "--append-system-prompt" => needValue "--append-system-prompt" fun v o =>
-          .ok { o with appendSystemPrompt := some v }
-      | "--prompt-mode" => needValue "--prompt-mode" fun v o =>
-          match PromptMode.ofString? v with
-          | some m => .ok { o with promptMode := some m }
-          | none => .error (err .configuration s!"unknown prompt mode: {v}"
-              none (some "expected replace, prepend or append"))
       | "--quiet" => go more { opts with quiet := true } positional
       | "--resume" => needValue "--resume" fun v o =>
           .ok { o with command := .resume v }
@@ -186,10 +176,10 @@ def applyCli (cfg : Config) (o : CliOptions) : Config :=
   let cfg := if o.noColor then { cfg with ui := { cfg.ui with color := false } } else cfg
   let cfg := match o.dataFencing with
     | some b => { cfg with dataFencing := b } | none => cfg
-  let cfg := match o.promptMode with
-    | some m => { cfg with prompt := { cfg.prompt with mode := m } } | none => cfg
-  let cfg := if o.noProjectPrompt
-    then { cfg with prompt := { cfg.prompt with projectFiles := [] } } else cfg
+  let cfg := match o.execution with
+    | some m => { cfg with execution := m } | none => cfg
+  let cfg := match o.systemPromptFile with
+    | some f => { cfg with prompt := { cfg.prompt with file := some f } } | none => cfg
   cfg
 
 end LeanPrime

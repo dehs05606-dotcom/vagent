@@ -11,6 +11,7 @@
 -/
 import LeanPrime.Agent.Events
 import LeanPrime.TUI.Ansi
+import LeanPrime.TUI.StatusBar
 
 namespace LeanPrime
 
@@ -28,16 +29,18 @@ structure RendererState where
 
 /-- Build a terminal event sink. -/
 def mkRenderer (color : Bool) (ui : UiConfig) (modelName : String)
-    : IO EventSink := do
+    (bar : StatusBar) : IO EventSink := do
   let st ← IO.mkRef ({ showThinking := ui.showThinking } : RendererState)
   let out ← IO.getStdout
   let c := color
-  -- Close an open streamed paragraph before printing a structured line.
+  -- Close an open streamed paragraph before printing a structured line, and
+  -- restore the status block the stream erased.
   let endText : IO Unit := do
     if (← st.get).inText then
       out.putStrLn ""
       st.modify (fun s => { s with inText := false })
-  let line (s : String) : IO Unit := do endText; out.putStrLn s; out.flush
+      bar.draw
+  let line (s : String) : IO Unit := do endText; bar.println s
   return {
     emit := fun e => do
       match e with
@@ -50,6 +53,7 @@ def mkRenderer (color : Bool) (ui : UiConfig) (modelName : String)
         line (style c grey s!"  {kind} project · {files} files · git: {if git then "yes" else "no"}")
       | .phaseChanged _ to =>
         st.modify (fun s => { s with lastPhase := to })
+        bar.update (fun m => { m with phase := to })
         if ui.compact then pure ()
         else match to with
           | .planning => line (style c grey "  planning…")
@@ -67,16 +71,19 @@ def mkRenderer (color : Bool) (ui : UiConfig) (modelName : String)
       | .planStepChanged id status desc =>
         if ui.showPlan then
           line s!"  {status.marker} {id}. {desc}"
-      | .modelStarted _ => pure ()
+      | .modelStarted _ =>
+        bar.update (fun m => { m with activity := "waiting on the model" })
       | .modelReasoning t =>
         if (← st.get).showThinking then
           -- reasoning is dimmed so it never competes with real output
-          out.putStr (style c grey t); out.flush
+          bar.print (style c grey t)
           st.modify (fun s => { s with inText := true })
       | .modelText t =>
-        out.putStr t; out.flush
+        bar.print t
         st.modify (fun s => { s with inText := true })
-      | .modelFinished _ _ => endText
+      | .modelFinished _ u =>
+        endText
+        bar.update (fun m => { m with tokens := m.tokens + u.totalTokens })
       | .toolRequested _ _ _ => pure ()
       | .toolDecision _ _ verdict reason =>
         if verdict == "deny" then
@@ -85,6 +92,9 @@ def mkRenderer (color : Bool) (ui : UiConfig) (modelName : String)
           pure ()   -- the approval prompt itself is the output
       | .toolStarted name summary =>
         st.modify (fun s => { s with toolCount := s.toolCount + 1 })
+        bar.update (fun m =>
+          { m with activity := s!"{name} {truncate summary 40}"
+                   toolCount := m.toolCount + 1 })
         line (style c cyan s!"  → {name}" ++ style c grey s!"  {truncate summary 90}")
       | .toolProgress t =>
         line (style c grey s!"  {truncate t 160}")
@@ -112,6 +122,13 @@ def mkRenderer (color : Bool) (ui : UiConfig) (modelName : String)
         line ""
       | .userSteered t =>
         line (style c magenta s!"  ↪ steering: {truncate t 120}")
+      | .complianceRejected attempt violations =>
+        bar.update (fun m => { m with complianceRetry := some attempt })
+        line (style c yellow s!"  ⊘ reply rejected — {violations}")
+        line (style c grey s!"    re-requesting (attempt {attempt})")
+      | .complianceAccepted n =>
+        bar.update (fun m => { m with complianceRetry := none })
+        line (style c green s!"  ✓ reply satisfies every enforced rule (after {n} retry/retries)")
       | .budgetWarning what used limit =>
         line (style c yellow s!"  ! {what} reached ({used}/{limit})")
       | .errorOccurred err_ =>

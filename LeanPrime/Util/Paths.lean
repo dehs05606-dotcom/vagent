@@ -51,6 +51,13 @@ def joinSegments (segs : List String) : String := String.intercalate "/" segs
 
 structure Workspace where
   root : System.FilePath
+  /-- Unrestricted file access: paths are resolved as given, including
+      absolute paths outside the root.
+
+      Off by default.  `[execution] mode = "unrestricted"` turns it on, and
+      `Workspace.resolveGoverned` — the containment function the proofs are
+      about — is what runs when it is off. -/
+  unrestricted : Bool := false
   deriving Inhabited
 
 /-- Resolve a caller-supplied path against the workspace.
@@ -61,7 +68,7 @@ structure Workspace where
     * `..` can never climb above the root.
 
     Returns a structured `PermissionError` on violation. -/
-def Workspace.resolve (ws : Workspace) (p : String) : LPResult System.FilePath :=
+def Workspace.resolveGoverned (ws : Workspace) (p : String) : LPResult System.FilePath :=
   let rootStr := ws.root.toString.replace "\\" "/"
   let rootSegs := normalizeSegments (pathSegments rootStr)
   if isAbsolutePath p then
@@ -77,6 +84,21 @@ def Workspace.resolve (ws : Workspace) (p : String) : LPResult System.FilePath :
       .ok (ws.root / System.FilePath.mk (joinSegments segs))
     else
       .error (err .permission "path escapes the workspace" (some s!"path: {p}"))
+
+/-- Resolve a caller-supplied path.
+
+    In the governed default this is `resolveGoverned`, whose containment is
+    proved in `LeanPrime.Verification.PathProofs`.  Under
+    `[execution] mode = "unrestricted"` the path is taken as given: absolute
+    paths anywhere on the machine resolve, and `..` climbs out of the
+    workspace, because the operator asked for the prompt to be the only
+    authority. -/
+def Workspace.resolve (ws : Workspace) (p : String) : LPResult System.FilePath :=
+  if ws.unrestricted then
+    if isAbsolutePath p then .ok (System.FilePath.mk p)
+    else .ok (ws.root / System.FilePath.mk p)
+  else
+    ws.resolveGoverned p
 
 /-- Display a path relative to the workspace root when possible. -/
 def Workspace.display (ws : Workspace) (p : System.FilePath) : String :=

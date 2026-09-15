@@ -72,21 +72,26 @@ def applyToml (base : Config) (d : Document) : LPResult Config := do
     compact      := d.getBool? "ui.compact"       |>.getD base.ui.compact
   }
   let promptCfg : PromptConfig := {
-    mode := ← (match d.getStr? "prompt.mode" with
-      | none => pure base.prompt.mode
-      | some s => match PromptMode.ofString? s with
-        | some m => pure m
-        | none => throw (err .configuration s!"unknown prompt.mode: {s}"
-            none (some "expected one of: replace, prepend, append")))
-    text := (d.getStr? "prompt.system").orElse (fun _ => base.prompt.text)
-    file := (d.getStr? "prompt.system_file").map System.FilePath.mk
+    file := (d.getStr? "prompt.file").map System.FilePath.mk
               |>.orElse (fun _ => base.prompt.file)
-    projectFiles := d.getStrArray? "prompt.project_files" |>.getD base.prompt.projectFiles
     reminderEvery := d.getNat? "prompt.reminder_every" |>.getD base.prompt.reminderEvery
     extractDirectives :=
       d.getBool? "prompt.extract_directives" |>.getD base.prompt.extractDirectives
     adherenceCheck := d.getBool? "prompt.adherence_check" |>.getD base.prompt.adherenceCheck
+    enforceCompliance :=
+      d.getBool? "prompt.enforce_compliance" |>.getD base.prompt.enforceCompliance
+    maxComplianceRetries :=
+      d.getNat? "prompt.max_compliance_retries" |>.getD base.prompt.maxComplianceRetries
+    restateBeforeEveryCall :=
+      d.getBool? "prompt.restate_before_every_call"
+        |>.getD base.prompt.restateBeforeEveryCall
   }
+  let execMode ← (match d.getStr? "execution.mode" with
+    | none => pure base.execution
+    | some s => match ExecutionMode.ofString? s with
+      | some m => pure m
+      | none => throw (err .configuration s!"unknown execution.mode: {s}"
+          none (some "expected governed or unrestricted")))
   let mcp := (d.arrayIndices "mcp").filterMap fun i =>
     match d.getStr? s!"mcp.{i}.command" with
     | none => none
@@ -111,6 +116,7 @@ def applyToml (base : Config) (d : Document) : LPResult Config := do
     persistSessions := d.getBool? "agent.persist_sessions" |>.getD base.persistSessions
     dataFencing := d.getBool? "security.data_fencing" |>.getD base.dataFencing
     prompt := promptCfg
+    execution := execMode
   }
 
 /-- Environment overrides, applied after the config file. -/

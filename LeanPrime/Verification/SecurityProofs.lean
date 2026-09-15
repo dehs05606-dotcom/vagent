@@ -7,26 +7,38 @@
   agent can go wrong, and because `Policy.decide` is pure and total, the
   properties hold for *every* input the model can produce — not just the
   inputs a test happens to try.
+
+  Every theorem is stated for `unrestricted = false`.  When the operator
+  turns on unrestricted mode, `decide` allows everything by design; see
+  `unrestricted_allows_everything` below.
 -/
 import LeanPrime.Security.Permissions
 
 namespace LeanPrime
+
+/-- **When unrestricted mode is on, everything is allowed.** -/
+theorem unrestricted_allows_everything (p : Policy) (r : Requirement)
+    (h : p.unrestricted = true) : (p.decide r).isAllow = true := by
+  unfold Policy.decide
+  simp [h, Decision.isAllow]
 
 /-- **A forbidden requirement is never allowed, in any approval mode.**
 
     This covers the deny list and unparseable commands.  Note it holds even
     for `yolo`: there is no mode in which the user's deny list is bypassed. -/
 theorem forbidden_never_allowed (p : Policy) (r : Requirement)
-    (h : r.risk = .forbidden) : (p.decide r).isAllow = false := by
+    (hunr : p.unrestricted = false) (h : r.risk = .forbidden)
+    : (p.decide r).isAllow = false := by
   unfold Policy.decide
-  simp [h, Decision.isAllow]
+  simp [hunr, h, Decision.isAllow]
 
 /-- Stronger form: a forbidden requirement is explicitly denied, not merely
     left un-allowed (so the user always sees a reason). -/
 theorem forbidden_is_denied (p : Policy) (r : Requirement)
-    (h : r.risk = .forbidden) : (p.decide r).isDeny = true := by
+    (hunr : p.unrestricted = false) (h : r.risk = .forbidden)
+    : (p.decide r).isDeny = true := by
   unfold Policy.decide
-  simp [h, Decision.isDeny]
+  simp [hunr, h, Decision.isDeny]
 
 /-- **A command on the deny list always classifies as forbidden**, whatever
     else appears on the command line. -/
@@ -39,39 +51,43 @@ theorem denied_command_is_forbidden (denied : List String) (cmdline : String)
 /-- **Composition of the two: a denied command can never execute.**
     This is the property the executor relies on. -/
 theorem denied_command_never_allowed (p : Policy) (cmdline : String)
+    (hunr : p.unrestricted = false)
     (h : p.deniedCommands.contains (commandHead cmdline) = true) :
     (p.decide (classifyCommand p.deniedCommands cmdline)).isAllow = false :=
-  forbidden_never_allowed p _ (denied_command_is_forbidden _ _ h)
+  forbidden_never_allowed p _ hunr (denied_command_is_forbidden _ _ h)
 
 /-- **A read-only session cannot perform a mutating action.** -/
 theorem readOnly_denies_mutation (p : Policy) (r : Requirement)
+    (hunr : p.unrestricted = false)
     (hmode : p.mode = .readOnly)
     (hmut : r.permissions.any Permission.isMutating = true) :
     (p.decide r).isDeny = true := by
   unfold Policy.decide
   by_cases hf : r.risk = .forbidden
-  · simp [hf, Decision.isDeny]
+  · simp [hunr, hf, Decision.isDeny]
   · have : (r.risk == Risk.forbidden) = false := by
       simp [beq_eq_false_iff_ne, hf]
-    simp [this, hmode, hmut, Decision.isDeny]
+    simp [hunr, this, hmode, hmut, Decision.isDeny]
 
 /-- **`ask` mode never silently performs a mutating action**: every mutating
     requirement either prompts or is denied, never `allow`. -/
 theorem ask_mode_never_silently_mutates (p : Policy) (r : Requirement)
+    (hunr : p.unrestricted = false)
     (hmode : p.mode = .ask)
     (hmut : r.permissions.any Permission.isMutating = true) :
     (p.decide r).isAllow = false := by
   unfold Policy.decide
   by_cases hf : r.risk = .forbidden
-  · simp [hf, Decision.isAllow]
+  · simp [hunr, hf, Decision.isAllow]
   · have hne : (r.risk == Risk.forbidden) = false := by
       simp [beq_eq_false_iff_ne, hf]
-    simp [hne, hmode, hmut, Decision.isAllow]
+    simp [hunr, hne, hmode, hmut, Decision.isAllow]
 
 /-- **High-risk work is never auto-approved in `auto` mode.**  This is the
     guarantee behind the default: the agent moves on its own for safe work
     and stops for the rest. -/
 theorem auto_never_allows_high (p : Policy) (r : Requirement)
+    (hunr : p.unrestricted = false)
     (hmode : p.mode = .auto) (hrisk : r.risk = .high) :
     (p.decide r).isAllow = false := by
   unfold Policy.decide
@@ -79,7 +95,7 @@ theorem auto_never_allows_high (p : Policy) (r : Requirement)
     simp [beq_eq_false_iff_ne, hrisk]
   by_cases hro : p.mode = .readOnly
   · rw [hmode] at hro; exact absurd hro (by simp)
-  · simp [hmode, hrisk, Decision.isAllow]
+  · simp [hunr, hmode, hrisk, Decision.isAllow]
 
 /-- Escalation step: with chaining present, the result is never `low`. -/
 theorem escalateChaining_not_low (cmdline : String) (base : Requirement)

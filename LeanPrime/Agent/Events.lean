@@ -34,6 +34,10 @@ inductive AgentEvent where
   | verificationCheck (name : String) (outcome : VerificationOutcome) (detail : String)
   | verificationFinished (result : VerificationResult)
   | userSteered (text : String)
+  /-- A reply was rejected for breaking a rule from the system prompt. -/
+  | complianceRejected (attempt : Nat) (violations : String)
+  /-- A previously rejected reply now satisfies every checkable rule. -/
+  | complianceAccepted (afterAttempts : Nat)
   | budgetWarning (what : String) (used : Nat) (limit : Nat)
   | errorOccurred (e : LPError)
   | notice (text : String)
@@ -87,6 +91,11 @@ def toJson : AgentEvent → Json
       [("event", .str "verification_finished"), ("outcome", .str r.outcome.toString),
        ("summary", .str r.summary)]
   | .userSteered t => Json.mkObj [("event", .str "user_steered"), ("text", .str t)]
+  | .complianceRejected n v => Json.mkObj
+      [("event", .str "compliance_rejected"), ("attempt", .num (JsonNumber.fromNat n)),
+       ("violations", .str v)]
+  | .complianceAccepted n => Json.mkObj
+      [("event", .str "compliance_accepted"), ("after_attempts", .num (JsonNumber.fromNat n))]
   | .budgetWarning w u l => Json.mkObj
       [("event", .str "budget_warning"), ("what", .str w),
        ("used", .num (JsonNumber.fromNat u)), ("limit", .num (JsonNumber.fromNat l))]

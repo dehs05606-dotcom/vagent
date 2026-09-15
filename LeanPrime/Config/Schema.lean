@@ -131,55 +131,61 @@ structure UiConfig where
   compact     : Bool
   deriving Inhabited, Repr
 
-/-- How a user-supplied system prompt combines with the built-in baseline. -/
-inductive PromptMode where
-  /-- The user's text *is* the system prompt.  The built-in operating
-      instructions are dropped entirely. -/
-  | replace
-  /-- User text first, then the baseline.  Default when a prompt is given. -/
-  | prepend
-  /-- Baseline first, then user text. -/
-  | append
+/-- What governs the agent's actions.
+
+    This is a deliberate fork in the design, not a slider.  Under `governed`
+    the permission engine rules on every call and the theorems in
+    `LeanPrime.Verification.SecurityProofs` describe what cannot happen.
+    Under `unrestricted` the system prompt is the only authority and those
+    theorems do not apply — which is why they are all stated for the
+    governed case rather than claimed unconditionally. -/
+inductive ExecutionMode where
+  /-- The permission engine decides.  Default. -/
+  | governed
+  /-- Nothing vetoes the prompt: no approval prompts, no risk classification,
+      no deny list, no workspace containment. -/
+  | unrestricted
   deriving Repr, DecidableEq, Inhabited
 
-def PromptMode.toString : PromptMode → String
-  | .replace => "replace" | .prepend => "prepend" | .append => "append"
+def ExecutionMode.toString : ExecutionMode → String
+  | .governed => "governed" | .unrestricted => "unrestricted"
 
-instance : ToString PromptMode := ⟨PromptMode.toString⟩
+instance : ToString ExecutionMode := ⟨ExecutionMode.toString⟩
 
-def PromptMode.ofString? (s : String) : Option PromptMode :=
+def ExecutionMode.ofString? (s : String) : Option ExecutionMode :=
   match toLower (trim s) with
-  | "replace" | "only" | "exclusive" => some .replace
-  | "prepend" | "before" | "first" => some .prepend
-  | "append" | "after" | "last" => some .append
+  | "governed" | "normal" | "safe" => some .governed
+  | "unrestricted" | "full" | "full-access" | "none" => some .unrestricted
   | _ => none
 
-/-- Everything governing how the system prompt is built.
+/-- How the one system prompt is enforced.
 
-    The point of this section is that the operator's instructions are the
-    highest authority in the run and stay that way: they are pinned out of
-    context trimming and re-asserted on a fixed cadence so they do not fade
-    as the conversation grows. -/
+    There is no setting here for *where* the prompt comes from beyond a
+    single path, because there is only one source: `SystemPrompt.lean`.
+    See `LeanPrime.Prompt.Source`. -/
 structure PromptConfig where
-  mode        : PromptMode
-  /-- Inline system prompt from the config file. -/
-  text        : Option String
-  /-- A file whose contents become the system prompt. -/
+  /-- Override for which copy of `SystemPrompt.lean` to load. -/
   file        : Option System.FilePath
-  /-- Workspace files consulted for project-level instructions, in order.
-      Empty disables project prompts. -/
-  projectFiles : List String
-  /-- Re-assert the operator's directives every N model calls.  0 disables.
+  /-- Re-assert the prompt's directives every N model calls.  0 disables.
 
-      This exists because a long agent run is where adherence actually
-      breaks: the instruction is thousands of tokens back and competing with
-      fresh tool output.  Periodic re-assertion is the fix. -/
+      A long run is where adherence actually breaks: the instruction is
+      thousands of tokens back and competing with fresh tool output.
+      Periodic re-assertion is the fix. -/
   reminderEvery : Nat
-  /-- Extract imperative rules from the prompt and restate them as an
-      explicit checklist the model is asked to satisfy. -/
+  /-- Extract imperative rules and restate them as an explicit checklist. -/
   extractDirectives : Bool
   /-- Before finishing, require the model to account for each directive. -/
   adherenceCheck : Bool
+  /-- Reject a reply that breaks a mechanically checkable rule and ask
+      again, rather than passing it on.  See `LeanPrime.Prompt.Compliance`. -/
+  enforceCompliance : Bool
+  /-- How many times a rejected reply may be re-requested before the run
+      gives up and reports the violation. -/
+  maxComplianceRetries : Nat
+  /-- Restate the directives immediately before every model call, in
+      addition to keeping them at the top of the conversation.  Costs tokens;
+      buys the strongest recency position there is. -/
+  restateBeforeEveryCall : Bool
   deriving Inhabited
 
 /-- The root configuration object. -/
@@ -208,8 +214,20 @@ structure Config where
       when pointing the agent at a codebase you do not control.  Either way
       the permission engine still rules on every action. -/
   dataFencing     : Bool
-  /-- How the system prompt is assembled.  See `LeanPrime.PromptConfig`. -/
+  /-- How the system prompt is loaded and enforced. -/
   prompt          : PromptConfig
+  /-- What governs the agent's actions. -/
+  execution       : ExecutionMode
   deriving Inhabited
+
+/-- Convenience: is the run unrestricted? -/
+def Config.unrestricted (c : Config) : Bool := c.execution == .unrestricted
+
+/-- Require a passing verification before the run may report success.
+
+    Governed runs always do.  An unrestricted run does only if its prompt
+    asks for it, because a gate the operator did not ask for is exactly the
+    kind of thing `unrestricted` exists to remove. -/
+def Config.requireVerification (c : Config) : Bool := !c.unrestricted
 
 end LeanPrime

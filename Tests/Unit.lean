@@ -15,6 +15,8 @@ import LeanPrime.Agent.State
 import LeanPrime.Agent.Planner
 import LeanPrime.Model.OpenAI
 import LeanPrime.Agent.PromptLayers
+import LeanPrime.Prompt.Compliance
+import LeanPrime.Agent.Directives
 import LeanPrime.Agent.Loop
 
 open LeanPrime Tests
@@ -114,7 +116,8 @@ def runUnit (r : Runner) : IO Unit := do
 
   section_ "permission decisions"
   let autoP : Policy := { mode := .auto, deniedCommands := defaultDeniedCommands,
-                          sessionGrants := [], approvedCommands := [] }
+                          sessionGrants := [], approvedCommands := [],
+                          unrestricted := false }
   check r "auto allows a read"
     (autoP.decide (classifyCommand [] "ls")).isAllow
   check r "auto does not allow rm"
@@ -222,44 +225,26 @@ def runUnit (r : Runner) : IO Unit := do
   check r "the adherence check carries the rules"
     (containsSubstr (adherenceMessage ds) "ticket number")
 
-  section_ "prompt layers"
-  checkEq r "cli outranks config"
-    (decide (authorityOf .cliFlag > authorityOf .configInline)) true
-  checkEq r "config outranks the environment"
-    (decide (authorityOf .configInline > authorityOf (.environment "X"))) true
-  checkEq r "the environment outranks a project file"
-    (decide (authorityOf (.environment "X") > authorityOf (.projectFile "AGENTS.md"))) true
-  checkEq r "every operator source outranks the baseline"
-    (decide (authorityOf (.projectFile "AGENTS.md") > authorityOf .builtinBaseline)) true
-  check r "operator sources are marked as such"
-    (LayerSource.isOperator .cliFlag && LayerSource.isOperator (.projectFile "a"))
-  check r "built-in sources are not"
-    (!LayerSource.isOperator .builtinBaseline && !LayerSource.isOperator .runtimeFacts)
-  let opLayer : PromptLayer :=
-    { source := .cliFlag, authority := authorityOf .cliFlag
-      pinned := true, sticky := true, text := "OPERATOR RULES" }
-  let baseLayer : PromptLayer :=
-    { source := .builtinBaseline, authority := authorityOf .builtinBaseline
-      pinned := true, sticky := false, text := "BASELINE METHOD" }
-  let stack : PromptStack := { layers := [baseLayer, opLayer], directives := [] }
-  check r "layers render strongest first"
-    (let rendered := stack.render
-     let opAt := (rendered.splitOn "OPERATOR RULES").head!.length
-     let baseAt := (rendered.splitOn "BASELINE METHOD").head!.length
-     opAt < baseAt)
-  check r "the operator layer is labelled in the rendered prompt"
-    (containsSubstr stack.render "Operating instructions")
-  check r "an operator prompt is detected" stack.hasOperatorPrompt
-  check r "a baseline-only stack has no operator prompt"
-    (!({ layers := [baseLayer], directives := [] } : PromptStack).hasOperatorPrompt)
-  check r "describe lists every layer"
-    (containsSubstr ({ layers := [baseLayer, opLayer], directives := [] } : PromptStack).describe
-      "command line")
+  section_ "prompt stack"
+  let testStack : PromptStack := {
+    text := "You are a test agent.\n- Never say hello."
+    origin := .compiledIn
+    directives := extractDirectives "You are a test agent.\n- Never say hello."
+    rules := complianceRules (extractDirectives "You are a test agent.\n- Never say hello.")
+    unknownVars := [] }
+  check r "render returns the text"
+    (testStack.render == "You are a test agent.\n- Never say hello.")
+  check r "describe includes source"
+    (containsSubstr testStack.describe "compiled into the binary")
+  check r "describe includes directive count"
+    (containsSubstr testStack.describe "directives")
+  check r "describeRules formats mechanically checkable rules"
+    (!testStack.describeRules.isEmpty)
 
-  section_ "prompt modes"
-  checkEq r "parses replace" (PromptMode.ofString? "replace") (some PromptMode.replace)
-  checkEq r "parses prepend" (PromptMode.ofString? "PREPEND") (some PromptMode.prepend)
-  checkEq r "rejects nonsense" (PromptMode.ofString? "sideways") none
+  section_ "execution modes"
+  checkEq r "parses governed" (ExecutionMode.ofString? "governed") (some ExecutionMode.governed)
+  checkEq r "parses unrestricted" (ExecutionMode.ofString? "unrestricted") (some ExecutionMode.unrestricted)
+  checkEq r "rejects nonsense" (ExecutionMode.ofString? "sideways") (none : Option ExecutionMode)
 
   section_ "pinned message trimming"
   check r "a pinned message survives a trim"

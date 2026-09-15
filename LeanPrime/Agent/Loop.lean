@@ -139,6 +139,9 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
   let sessionId ← freshId "s"
   env.events.emit (.sessionStarted sessionId task env.provider.model)
 
+  let rules := env.prompts.rules
+  let retryLimit := env.config.prompt.maxComplianceRetries
+
   -- Phase: understanding -> inspecting -> context
   let mut st : AgentState :=
     { task := task, budget := { startedMs := startedMs } }
@@ -150,16 +153,15 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
 
   let ctxText := buildContext snap task [] (env.config.budget.contextTokens * 3 / 10)
                    env.config.dataFencing
-  -- The system prompt is the rendered layer stack, so whatever the operator
-  -- supplied leads it and outranks the baseline.
+  -- The system prompt is exactly the text of SystemPrompt.lean, after
+  -- template substitution. Nothing is prepended or appended to it.
   st := st.addMessage { Message.system env.prompts.render with pinned := true }
-  st := st.addMessage
-    { Message.user (taskPrompt task ctxText ++ "\n\n" ++ planningPrompt) with pinned := true }
-  -- State the operator's rules once more as an explicit checklist. Prose in
-  -- a system prompt is easy to skim past; an enumerated list is not.
+  st := st.addMessage { Message.user (taskPrompt task ctxText) with pinned := true }
+  -- State the rules once more as an enumerated checklist. Prose in a system
+  -- prompt is easy to skim past; a numbered list is not.
   if !env.prompts.directives.isEmpty then
     env.events.emit (.notice
-      s!"{env.prompts.directives.length} operator directive(s) in force")
+      s!"{env.prompts.directives.length} directive(s) in force, {rules.length} enforced")
     st := st.addMessage
       { Message.user (reminderMessage env.prompts.directives) with pinned := true }
 
@@ -201,6 +203,13 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
 
     st := { st with messages := trimHistory env.config.budget.contextTokens st.messages }
 
+    -- Restate the rules immediately before the call as well.  The top of the
+    -- conversation is the strongest position for authority; the bottom is the
+    -- strongest position for recency.  With this on, the rules hold both.
+    if env.config.prompt.restateBeforeEveryCall && !env.prompts.directives.isEmpty then
+      st := st.addMessage
+        { Message.user (reminderMessage env.prompts.directives) with pinned := false }
+
     -- model call
     st ← advance env st .modelRequested
     if st.phase.isTerminal then break
@@ -227,6 +236,37 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
     | .ok resp =>
       st := { st with budget := { st.budget with usage := st.budget.usage + resp.usage } }
       env.events.emit (.modelFinished resp.finishReason.toString resp.usage)
+
+      -- Mechanical compliance gate.
+      --
+      -- This is the part that does not rely on the model agreeing. A reply
+      -- that breaks a checkable rule from SystemPrompt.lean is rejected here
+      -- and never enters the conversation as an assistant turn: the model is
+      -- handed the exact rule and the exact text it produced, and asked
+      -- again. Only replies the model is actually finishing on are checked —
+      -- a turn that is calling tools has not written its answer yet.
+      if !rules.isEmpty && resp.toolCalls.isEmpty && !resp.content.isEmpty then
+        let violations := checkCompliance rules resp.content
+        if !violations.isEmpty then
+          if st.complianceRetries >= retryLimit then
+            -- Out of attempts. Report the violation rather than passing off a
+            -- non-compliant answer as a good one.
+            env.events.emit (.errorOccurred (err .verification
+              s!"the reply still breaks {violations.length} rule(s) after \
+                 {retryLimit} attempt(s)"
+              (some (violationSummary violations))
+              (some "check that the rule in SystemPrompt.lean is satisfiable")))
+            st ← advance env st .fatalError
+            break
+          st := { st with complianceRetries := st.complianceRetries + 1 }
+          env.events.emit (.complianceRejected st.complianceRetries
+            (violationSummary violations))
+          st := st.addMessage
+            { Message.user (correctionMessage violations) with pinned := false }
+          continue
+        else if st.complianceRetries > 0 then
+          env.events.emit (.complianceAccepted st.complianceRetries)
+          st := { st with complianceRetries := 0 }
 
       -- a numbered plan in the reply becomes structured plan state
       if st.plan.isNone then

@@ -84,13 +84,26 @@ structure Policy where
   sessionGrants   : List Permission
   /-- Exact command lines approved for the rest of the session. -/
   approvedCommands : List String
+  /-- Unrestricted execution: the system prompt is the only authority.
+
+      When set, `decide` allows everything — no approval prompts, no risk
+      classification, no deny list, and (see `Workspace.resolve`) no
+      workspace containment.  The operator turns this on deliberately with
+      `[execution] mode = "unrestricted"`; it is off by default.
+
+      Every theorem in `LeanPrime.Verification.SecurityProofs` about what
+      cannot run is stated for `unrestricted = false`, and
+      `unrestricted_allows_everything` states what happens when it is true,
+      so the guarantees describe the mode they actually hold in. -/
+  unrestricted    : Bool
   deriving Inhabited
 
 def Policy.ofConfig (c : Config) : Policy :=
   { mode := c.approval
-    deniedCommands := c.deniedCommands
+    deniedCommands := if c.unrestricted then [] else c.deniedCommands
     sessionGrants := []
-    approvedCommands := [] }
+    approvedCommands := []
+    unrestricted := c.unrestricted }
 
 /-! ### Command classification -/
 
@@ -193,11 +206,14 @@ def classifyCommand (denied : List String) (cmdline : String) : Requirement :=
 /-- Decide whether a requirement may run under a policy.
 
     Order of checks is significant and is what the proofs rely on:
-    1. `forbidden` is refused in every mode, including `yolo`;
+    0. `unrestricted` allows everything and stops here;
+    1. `forbidden` is otherwise refused in every mode, including `yolo`;
     2. `readOnly` refuses anything mutating;
     3. otherwise the approval mode decides. -/
 def Policy.decide (p : Policy) (r : Requirement) : Decision :=
-  if r.risk == .forbidden then
+  if p.unrestricted then
+    .allow
+  else if r.risk == .forbidden then
     .deny r.summary
   else if p.mode == .readOnly && r.permissions.any Permission.isMutating then
     .deny s!"session is read-only; {r.summary}"
