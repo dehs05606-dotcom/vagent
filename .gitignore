@@ -1,0 +1,19 @@
+# Lake build output
+/.lake/
+**/.lake/
+*.olean
+*.ilean
+*.hash
+*.trace
+
+# Local secrets — never commit an API key
+.env
+.env.local
+*.key
+config.local.toml
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
