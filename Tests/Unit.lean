@@ -764,7 +764,11 @@ def runUnit (r : Runner) : IO Unit := do
   section_ "topic adherence"
   let topicOk := checkTopic "Write a Lean 4 function" "implement sorting" "Here is the Lean 4 sorting implementation"
   check r "on-topic reply detected" topicOk.onTopic
-  let topicBad := checkTopic "Write a Lean 4 function" "implement sorting" "The weather today is sunny and warm"
+  -- Long enough to have keywords to measure; a shorter one is correctly
+  -- treated as unjudgeable rather than off-topic.
+  let topicBad := checkTopic "Write a Lean 4 function" "implement sorting"
+    "The weather today is sunny and warm, tourists gather along the river, \
+     restaurants stay open late, flowers bloom across every boulevard."
   check r "off-topic reply detected" (!topicBad.onTopic)
 
   section_ "intent classification"
@@ -788,6 +792,28 @@ def runUnit (r : Runner) : IO Unit := do
   check r "different texts have positive distance" (dist > 0.0)
   check r "identical fingerprint has zero distance"
     (fingerprintDistance fp1 fp1 == 0.0)
+
+  section_ "short replies are not judged"
+  -- "hello" got treated as a work order: the reply was flagged off-topic
+  -- (overlap 0.000000) and as lacking technical language, because every
+  -- semantic check is a statistic and a greeting has no distribution.
+  let greeting := "Hello — what would you like me to do?"
+  check r "a greeting is not off-topic"
+    (checkTopic "You are a coding agent that edits files and runs builds"
+      "hello" greeting).onTopic
+  check r "a greeting trips no semantic constraint"
+    ((checkSemanticConstraints
+       [.requireTechnical, .requireFormal, .stayOnTopic ["compile", "module"]]
+       "prompt" "hello" greeting).isEmpty)
+  -- The guards must not silence a long reply that really is off-topic.
+  let longOffTopic :=
+    "The weather in Paris is lovely, flowers bloom across the boulevards, \
+     tourists gather near the river, and restaurants stay open until midnight."
+  check r "a long off-topic reply is still caught"
+    (!(checkTopic "You are a coding agent that compiles modules and runs tests"
+        "fix the build" longOffTopic).onTopic)
+  check r "a long reply is still judged for technical language"
+    (!(checkSemanticConstraints [.requireTechnical] "p" "t" longOffTopic).isEmpty)
 
   section_ "drift detection"
   let noDrift := analyzeDrift

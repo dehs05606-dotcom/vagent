@@ -520,24 +520,28 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
            than long prose.")
         continue
 
-      -- A reply with no tool calls and no work done yet is the model talking
-      -- about the task rather than doing it.  Verification at that point
-      -- would check a tree nobody has touched, so push it to act instead.
-      if st.budget.toolCalls == 0 then
-        if st.budget.iterations >= 3 then
-          env.events.emit (.notice "the model produced no tool calls; stopping")
-          st ← advance env st .fatalError
-          break
-        st := st.addMessage (Message.user
-          "You have not called any tools yet. Stop describing the work and start doing it: \
-           make your first tool call now.")
-        continue
+      -- Nothing was called in this whole run: the model answered rather than
+      -- acted.
+      --
+      -- This used to push back — "stop describing the work and start doing
+      -- it: make your first tool call now" — on the theory that a reply with
+      -- no tool calls was the model talking about the task instead of doing
+      -- it.  That reasoning only holds if every input is a work order.  It
+      -- is not: "hello" is a greeting, "what does this repo do" is a
+      -- question, and the push turned both into a forced repository audit
+      -- the user never asked for.
+      --
+      -- An answer is a complete reply.  The checks below all verify *work*,
+      -- so with none done there is nothing for them to check and they are
+      -- skipped; verification of an untouched tree is inconclusive, which
+      -- ends the run on the answer.
+      let answeredOnly := st.budget.toolCalls == 0
 
       -- Behavioural gate.  The prompt's rules about *how* the work is done
       -- are checked against the trace of what actually happened, not against
       -- the model's account of it.  Asked once: the point is to surface
       -- missing work at the moment it matters, not to loop.
-      if interlock.isActive && !behaviorChecked then
+      if interlock.isActive && !behaviorChecked && !answeredOnly then
         let unmet := interlock.finalViolations
         if !unmet.isEmpty then
           behaviorChecked := true
@@ -556,7 +560,7 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
       -- and it is a separate call precisely so the reviewer has no stake in
       -- the reply having been right.
       if reviewPolicy.enabled && !env.prompts.directives.isEmpty
-          && !resp.content.isEmpty then
+          && !resp.content.isEmpty && !answeredOnly then
         match ← runReview env.provider env.prompts.directives task resp.content with
         | .error e =>
           -- A reviewer that could not be reached is not a pass.  Say so and
@@ -592,7 +596,7 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
       -- deliberate pass over the checklist at the moment it matters, not a
       -- loop that badgers the model into agreeing.
       if env.config.prompt.adherenceCheck && !env.prompts.directives.isEmpty
-          && !st.adherenceChecked then
+          && !st.adherenceChecked && !answeredOnly then
         st := { st with adherenceChecked := true }
         env.events.emit (.notice "checking the work against the operator's directives")
         st := st.addMessage
@@ -652,10 +656,15 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
 
   let summary := match st.phase with
     | .completed =>
-      let verdict := match st.lastVerification with
-        | some v => v.summary
-        | none => "no verification was run"
-      s!"{verdict}; {st.touchedFiles.length} file(s) changed"
+      -- A run that called no tools answered a question; saying "0 check(s)
+      -- could be run; 0 file(s) changed" about a greeting reads as a failure
+      -- when nothing failed.
+      if st.budget.toolCalls == 0 then "answered; no action was taken"
+      else
+        let verdict := match st.lastVerification with
+          | some v => v.summary
+          | none => "no verification was run"
+        s!"{verdict}; {st.touchedFiles.length} file(s) changed"
     | .failed => "run failed; see the errors above"
     | .cancelled => "cancelled by the user"
     | other => s!"stopped in phase {other}"

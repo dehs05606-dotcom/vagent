@@ -90,13 +90,23 @@ structure TopicResult where
   replyKeys  : List String
   deriving Repr, Inhabited
 
+/-- Fewer significant words than this and there is nothing to measure.
+
+    "Hello — what would you like me to do?" shares no keywords with a long
+    system prompt, and reporting that as off-topic drift is a false positive
+    on a perfectly good reply.  The honest answer for a reply this short is
+    that topic cannot be judged, not that it failed. -/
+def minKeywordsToJudge : Nat := 5
+
 def checkTopic (promptText taskText replyText : String)
     (threshold : Float := 0.05) : TopicResult :=
   let promptKeys := extractKeywords (promptText ++ " " ++ taskText)
   let replyKeys := extractKeywords replyText
   let overlap := keywordOverlap promptKeys replyKeys
   { overlap := overlap
-    onTopic := overlap >= threshold
+    -- Too short to judge counts as on-topic: a check that cannot decide
+    -- must not report a violation.
+    onTopic := replyKeys.length < minKeywordsToJudge || overlap >= threshold
     promptKeys := promptKeys.take 10
     replyKeys := replyKeys.take 10 }
 
@@ -358,6 +368,12 @@ def extractSemanticConstraints (ds : List Directive) (promptText : String)
 def checkSemanticConstraints (constraints : List SemanticConstraint)
     (_promptText _taskText replyText : String) : List (SemanticConstraint × String) :=
   Id.run do
+  -- Every constraint here is a statistic over the reply: keyword overlap,
+  -- marker density, tone distance.  None of them mean anything on a reply
+  -- too short to have a distribution, and firing them there produces
+  -- confident nonsense — "lacks technical language" about a greeting.
+  if (extractKeywords replyText).length < minKeywordsToJudge then
+    return []
   let mut violations : List (SemanticConstraint × String) := []
   for c in constraints do
     match c with
