@@ -138,7 +138,7 @@ def estimateTokens (s : String) : Nat := s.utf8ByteSize / 4 + 1
     Spends at most `tokenBudget` estimated tokens, in priority order:
     project facts, git state, key files, then the ranked file listing. -/
 def buildContext (snap : ProjectSnapshot) (task : String) (touched : List String)
-    (tokenBudget : Nat) : String := Id.run do
+    (tokenBudget : Nat) (fence : Bool) : String := Id.run do
   let mut parts : Array String := #[]
   let mut spent := 0
   -- 1. facts (always included; tiny)
@@ -152,14 +152,14 @@ def buildContext (snap : ProjectSnapshot) (task : String) (touched : List String
   spent := spent + estimateTokens facts
   -- 2. working tree state
   if snap.isGit && !snap.gitStatus.isEmpty then
-    let block := untrustedBlock "git:status" (clampLines snap.gitStatus 60 10)
+    let block := frameData fence "git:status" (clampLines snap.gitStatus 60 10)
     if spent + estimateTokens block < tokenBudget then
       parts := parts.push ("## Uncommitted changes\n" ++ block)
       spent := spent + estimateTokens block
   -- 3. key files, largest value first
   for (name, content) in snap.keyFiles do
     let trimmed := clampLines content 80 0
-    let block := untrustedBlock s!"file:{name}" trimmed
+    let block := frameData fence s!"file:{name}" trimmed
     if spent + estimateTokens block < tokenBudget * 6 / 10 then
       parts := parts.push s!"## {name}\n{block}"
       spent := spent + estimateTokens block
@@ -174,7 +174,7 @@ def buildContext (snap : ProjectSnapshot) (task : String) (touched : List String
   if !listing.isEmpty then
     parts := parts.push
       ("## Files, most relevant to this task first\n" ++
-       untrustedBlock "repository:listing" (String.intercalate "\n" listing.toList))
+       frameData fence "repository:listing" (String.intercalate "\n" listing.toList))
   return String.intercalate "\n\n" parts.toList
 
 end LeanPrime

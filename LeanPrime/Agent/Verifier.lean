@@ -113,9 +113,9 @@ def verify (ws : Workspace) (cfg : Config) (events : EventSink)
   return result
 
 /-- Render a verification failure for the model, with the real output. -/
-def renderFailure (v : VerificationResult) : String :=
+def renderFailure (v : VerificationResult) (fence : Bool := false) : String :=
   let failed := v.checks.filter (fun c => c.outcome == .failed)
   String.intercalate "\n\n"
-    (failed.map fun c => untrustedBlock s!"verification:{c.name}" c.detail)
+    (failed.map fun c => frameData fence s!"verification:{c.name}" c.detail)
 
 end LeanPrime

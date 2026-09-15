@@ -116,6 +116,7 @@ Then add it to `Registry.builtin`. Three rules:
 
 1. **Resolve every path through `ctx.workspace.resolve`.** That is the proved
    containment boundary.
-2. **Wrap outside data in `untrustedBlock`** and clamp it with
-   `clampOutput ctx.config.limits.…`.
+2. **Label outside data with `frameData ctx.config.dataFencing "source" body`**
+   and clamp it with `clampOutput ctx.config.limits.…`. That one call honours
+   the operator's framing setting; do not format the block by hand.
 3. **Declare the requirement honestly.** The engine trusts it.

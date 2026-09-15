@@ -66,7 +66,7 @@ def readFile : Tool where
         ctx.config.limits.headLines ctx.config.limits.tailLines
       return .ok {
         ok := true
-        content := untrustedBlock s!"file:{ctx.workspace.display path}" clamped
+        content := frameData ctx.config.dataFencing s!"file:{ctx.workspace.display path}" clamped
         display := s!"read {ctx.workspace.display path} ({allLines.length} lines)"
         metadata := Json.mkObj
           [("path", .str (ctx.workspace.display path)),
@@ -209,7 +209,7 @@ def listDirectory : Tool where
       let body := String.intercalate "\n" sorted.toList
       return .ok {
         ok := true
-        content := untrustedBlock s!"dir:{rel}" (clampOutput body ctx.config.limits.maxBytes 200 40)
+        content := frameData ctx.config.dataFencing s!"dir:{rel}" (clampOutput body ctx.config.limits.maxBytes 200 40)
         display := s!"list {rel} ({sorted.size} entries)"
         metadata := Json.mkObj [("path", .str rel), ("count", .num (JsonNumber.fromNat sorted.size))] }
 

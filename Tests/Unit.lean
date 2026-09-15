@@ -14,6 +14,8 @@ import LeanPrime.Security.Permissions
 import LeanPrime.Agent.State
 import LeanPrime.Agent.Planner
 import LeanPrime.Model.OpenAI
+import LeanPrime.Agent.PromptLayers
+import LeanPrime.Agent.Loop
 
 open LeanPrime Tests
 
@@ -184,6 +186,92 @@ def runUnit (r : Runner) : IO Unit := do
         [{ name := "tests", outcome := .passed, detail := "" }]) : AgentState }).mayReportSuccess)
   check r "no verification means no success claim"
     (!({ : AgentState }).mayReportSuccess)
+
+  section_ "directive extraction"
+  let prompt := "# Rules\n\
+    - Always run the tests before reporting.\n\
+    - Never delete a file without asking.\n\
+    - Prefer small commits.\n\
+    This paragraph is explanation, not a rule.\n\
+    You must include the ticket number.\n"
+  let ds := extractDirectives prompt
+  checkEq r "extracts every stated rule" ds.length 4
+  check r "a heading is not a directive"
+    (!ds.any (fun d => containsSubstr d.text "Rules"))
+  check r "plain explanatory prose is not a directive"
+    (!ds.any (fun d => containsSubstr d.text "explanation"))
+  check r "\"never\" is classified as a prohibition"
+    (ds.any (fun d => d.force == .prohibition && containsSubstr d.text "delete"))
+  check r "\"always\" is classified as an obligation"
+    (ds.any (fun d => d.force == .obligation && containsSubstr d.text "tests"))
+  check r "\"must\" in prose is classified as an obligation"
+    (ds.any (fun d => d.force == .obligation && containsSubstr d.text "ticket"))
+  check r "\"prefer\" is classified as a preference"
+    (ds.any (fun d => d.force == .preference && containsSubstr d.text "commits"))
+  check r "bullets keep their original wording"
+    (ds.any (fun d => d.text == "Always run the tests before reporting."))
+  checkEq r "an empty prompt yields no directives" (extractDirectives "").length 0
+  check r "extraction is capped"
+    ((extractDirectives (String.intercalate "\n"
+        (List.replicate 100 "- Always do the thing.")) 10).length == 10)
+  check r "prohibitions are restated first"
+    (containsSubstr (renderDirectives ds) "✗")
+  check r "the reminder carries the rules"
+    (containsSubstr (reminderMessage ds) "delete a file")
+  check r "no reminder without rules" ((reminderMessage []).isEmpty)
+  check r "the adherence check carries the rules"
+    (containsSubstr (adherenceMessage ds) "ticket number")
+
+  section_ "prompt layers"
+  checkEq r "cli outranks config"
+    (decide (authorityOf .cliFlag > authorityOf .configInline)) true
+  checkEq r "config outranks the environment"
+    (decide (authorityOf .configInline > authorityOf (.environment "X"))) true
+  checkEq r "the environment outranks a project file"
+    (decide (authorityOf (.environment "X") > authorityOf (.projectFile "AGENTS.md"))) true
+  checkEq r "every operator source outranks the baseline"
+    (decide (authorityOf (.projectFile "AGENTS.md") > authorityOf .builtinBaseline)) true
+  check r "operator sources are marked as such"
+    (LayerSource.isOperator .cliFlag && LayerSource.isOperator (.projectFile "a"))
+  check r "built-in sources are not"
+    (!LayerSource.isOperator .builtinBaseline && !LayerSource.isOperator .runtimeFacts)
+  let opLayer : PromptLayer :=
+    { source := .cliFlag, authority := authorityOf .cliFlag
+      pinned := true, sticky := true, text := "OPERATOR RULES" }
+  let baseLayer : PromptLayer :=
+    { source := .builtinBaseline, authority := authorityOf .builtinBaseline
+      pinned := true, sticky := false, text := "BASELINE METHOD" }
+  let stack : PromptStack := { layers := [baseLayer, opLayer], directives := [] }
+  check r "layers render strongest first"
+    (let rendered := stack.render
+     let opAt := (rendered.splitOn "OPERATOR RULES").head!.length
+     let baseAt := (rendered.splitOn "BASELINE METHOD").head!.length
+     opAt < baseAt)
+  check r "the operator layer is labelled in the rendered prompt"
+    (containsSubstr stack.render "Operating instructions")
+  check r "an operator prompt is detected" stack.hasOperatorPrompt
+  check r "a baseline-only stack has no operator prompt"
+    (!({ layers := [baseLayer], directives := [] } : PromptStack).hasOperatorPrompt)
+  check r "describe lists every layer"
+    (containsSubstr ({ layers := [baseLayer, opLayer], directives := [] } : PromptStack).describe
+      "command line")
+
+  section_ "prompt modes"
+  checkEq r "parses replace" (PromptMode.ofString? "replace") (some PromptMode.replace)
+  checkEq r "parses prepend" (PromptMode.ofString? "PREPEND") (some PromptMode.prepend)
+  checkEq r "rejects nonsense" (PromptMode.ofString? "sideways") none
+
+  section_ "pinned message trimming"
+  check r "a pinned message survives a trim"
+    (let pinned := { Message.user "OPERATOR RULE" with pinned := true }
+     let bulk := List.replicate 50 (Message.user (String.ofList (List.replicate 400 'x')))
+     let msgs := Message.system "sys" :: Message.user "task" :: pinned :: bulk
+     let trimmed := trimHistory 400 msgs
+     trimmed.any (fun m => containsSubstr m.plainText "OPERATOR RULE"))
+  check r "trimming still drops bulk history"
+    (let bulk := List.replicate 50 (Message.user (String.ofList (List.replicate 400 'x')))
+     let msgs := Message.system "sys" :: Message.user "task" :: bulk
+     (trimHistory 400 msgs).length < msgs.length)
 
   section_ "provider wire format"
   check r "a tool call reply parses"

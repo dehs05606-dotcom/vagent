@@ -30,9 +30,36 @@ def buildSink (cfg : Config) (opts : CliOptions) (interactive : Bool) : IO Event
     | .plain => mkRenderer false cfg.ui cfg.provider.model
     | .tui => mkRenderer (cfg.ui.color && interactive) cfg.ui cfg.provider.model
 
+/-- Assemble the system prompt for a run from every configured source.
+
+    `--append-system-prompt` is folded in as the lowest-authority operator
+    layer, which is what "append" means: it adds instructions without
+    displacing the ones already in force. -/
+def buildPrompts (cfg : Config) (opts : CliOptions) (snapshotKind : String)
+    (isGit : Bool) (toolNames : List String) : IO (LPResult PromptStack) := do
+  let baseline := baselinePrompt
+  let facts := runtimeFactsPrompt snapshotKind isGit cfg.approval toolNames
+  match ← buildPromptStack cfg cfg.workspace baseline facts
+          opts.systemPromptText opts.systemPromptFile with
+  | .error e => return .error e
+  | .ok stack =>
+    match opts.appendSystemPrompt with
+    | none => return .ok stack
+    | some extra =>
+      let layer : PromptLayer :=
+        { source := .cliFlag, authority := authorityOf .builtinBaseline + 1
+          pinned := true, sticky := true, text := trim extra }
+      let directives :=
+        if cfg.prompt.extractDirectives then
+          stack.directives ++
+            (extractDirectives extra).map (fun d =>
+              { d with id := d.id + stack.directives.length })
+        else stack.directives
+      return .ok { layers := stack.layers ++ [layer], directives := directives }
+
 /-- Assemble everything needed for a run. -/
 def buildRunEnv (cfg : Config) (apiKey : String) (events : EventSink)
-    (interactive : Bool) : IO RunEnv := do
+    (prompts : PromptStack) (interactive : Bool) : IO RunEnv := do
   let logger : Logger :=
     { minLevel := cfg.logging.level, file := cfg.logging.file
       quiet := cfg.output == .json || cfg.logging.level.rank > LogLevel.debug.rank }
@@ -56,6 +83,7 @@ def buildRunEnv (cfg : Config) (apiKey : String) (events : EventSink)
     events := events
     config := cfg
     workspace := ws
+    prompts := prompts
     -- Steering is read from a non-blocking source; with no TTY there is none.
     pollSteer := pure [] }
 

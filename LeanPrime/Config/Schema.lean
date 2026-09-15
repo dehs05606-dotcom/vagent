@@ -131,6 +131,57 @@ structure UiConfig where
   compact     : Bool
   deriving Inhabited, Repr
 
+/-- How a user-supplied system prompt combines with the built-in baseline. -/
+inductive PromptMode where
+  /-- The user's text *is* the system prompt.  The built-in operating
+      instructions are dropped entirely. -/
+  | replace
+  /-- User text first, then the baseline.  Default when a prompt is given. -/
+  | prepend
+  /-- Baseline first, then user text. -/
+  | append
+  deriving Repr, DecidableEq, Inhabited
+
+def PromptMode.toString : PromptMode → String
+  | .replace => "replace" | .prepend => "prepend" | .append => "append"
+
+instance : ToString PromptMode := ⟨PromptMode.toString⟩
+
+def PromptMode.ofString? (s : String) : Option PromptMode :=
+  match toLower (trim s) with
+  | "replace" | "only" | "exclusive" => some .replace
+  | "prepend" | "before" | "first" => some .prepend
+  | "append" | "after" | "last" => some .append
+  | _ => none
+
+/-- Everything governing how the system prompt is built.
+
+    The point of this section is that the operator's instructions are the
+    highest authority in the run and stay that way: they are pinned out of
+    context trimming and re-asserted on a fixed cadence so they do not fade
+    as the conversation grows. -/
+structure PromptConfig where
+  mode        : PromptMode
+  /-- Inline system prompt from the config file. -/
+  text        : Option String
+  /-- A file whose contents become the system prompt. -/
+  file        : Option System.FilePath
+  /-- Workspace files consulted for project-level instructions, in order.
+      Empty disables project prompts. -/
+  projectFiles : List String
+  /-- Re-assert the operator's directives every N model calls.  0 disables.
+
+      This exists because a long agent run is where adherence actually
+      breaks: the instruction is thousands of tokens back and competing with
+      fresh tool output.  Periodic re-assertion is the fix. -/
+  reminderEvery : Nat
+  /-- Extract imperative rules from the prompt and restate them as an
+      explicit checklist the model is asked to satisfy. -/
+  extractDirectives : Bool
+  /-- Before finishing, require the model to account for each directive. -/
+  adherenceCheck : Bool
+  deriving Inhabited
+
 /-- The root configuration object. -/
 structure Config where
   provider     : ProviderConfig
@@ -149,6 +200,16 @@ structure Config where
   shellTimeoutSec : Nat
   /-- Persist sessions to disk. -/
   persistSessions : Bool
+  /-- Wrap external material in an explicit data fence that tells the model
+      the content is data rather than instruction.
+
+      Off by default: the agent follows the instructions it is given,
+      including ones it finds in the repository it is working on.  Turn it on
+      when pointing the agent at a codebase you do not control.  Either way
+      the permission engine still rules on every action. -/
+  dataFencing     : Bool
+  /-- How the system prompt is assembled.  See `LeanPrime.PromptConfig`. -/
+  prompt          : PromptConfig
   deriving Inhabited
 
 end LeanPrime

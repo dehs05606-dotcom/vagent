@@ -31,6 +31,33 @@ min_interval_ms   = 6500
 
 # extra_headers = ["X-Title: lean-prime"]
 
+[prompt]
+# YOUR instructions outrank LeanPrime's built-in ones. See Docs/system-prompt.md
+#
+# mode:
+#   replace — your text IS the system prompt; the built-in method is dropped
+#   prepend — yours first, then the built-in method (default)
+#   append  — built-in method first, then yours
+mode              = "prepend"
+
+# Inline, or point at a file. A file is usually easier to maintain.
+# system          = "Always write the test before the implementation."
+# system_file     = "~/my-agent-rules.md"
+
+# Workspace files consulted for project-level instructions, first match wins.
+project_files     = ["LEANPRIME.md", "AGENTS.md", "CLAUDE.md", ".leanprime/system.md"]
+
+# Re-assert your rules every N model calls. This is what keeps a long run on
+# instruction: by iteration fifteen the original prompt is far behind a wall of
+# tool output and is competing with it for attention. 0 disables.
+reminder_every    = 3
+
+# Parse imperative rules out of your prompt and restate them as a checklist.
+extract_directives = true
+
+# Before finishing, require the model to account for each rule.
+adherence_check   = true
+
 [agent]
 # auto      — safe work runs unattended, risky work asks
 # ask       — every mutating action asks
@@ -53,6 +80,13 @@ tail_lines        = 60
 max_file_bytes    = 262144
 
 [security]
+# Mark file contents and command output as data rather than instruction.
+# Off by default: the agent follows instructions wherever it finds them,
+# including in the repository it is working on. Turn it on when pointing the
+# agent at a codebase you did not write. Either way the permission engine
+# still rules on every action.
+data_fencing      = false
+
 # Refused outright in every approval mode, matched on the command's first word.
 denied_commands   = ["shutdown", "reboot", "halt", "poweroff", "mkfs",
                      "fdisk", "dd", "sudo", "su", "doas"]

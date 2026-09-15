@@ -28,7 +28,7 @@ private def renderProc (ctx : ToolContext) (label : String) (r : ProcResult) : T
   let clamped := clampOutput (trim combined) ctx.config.limits.maxBytes
     ctx.config.limits.headLines ctx.config.limits.tailLines
   { ok := r.exitCode == 0 && !r.timedOut
-    content := untrustedBlock s!"command:{label}" s!"{status}\n{clamped}"
+    content := frameData ctx.config.dataFencing s!"command:{label}" s!"{status}\n{clamped}"
     display := s!"{label} — {status}"
     metadata := Json.mkObj
       [("exit_code", .num (JsonNumber.fromNat r.exitCode)),

@@ -48,6 +48,13 @@ structure Message where
   /-- Set on `.tool` messages to correlate with the request. -/
   toolCallId : Option String := none
   name       : Option String := none
+  /-- Exempt from context trimming.
+
+      The operator's instructions and their periodic re-assertions carry
+      this.  Without it, the first thing evicted from a long conversation is
+      the oldest turn — which is exactly the instruction the run is supposed
+      to be obeying. -/
+  pinned     : Bool := false
   deriving Repr, Inhabited
 
 namespace Message
@@ -77,17 +84,26 @@ def estimateTokens (m : Message) : Nat :=
 
 end Message
 
-/-- Wrap untrusted material (repository files, command output, MCP results)
-    in an explicit, clearly delimited block.
+/-- Label a block of external material (a file, command output, an MCP
+    result) with where it came from.
 
-    This is a defence-in-depth measure for prompt injection: the system
-    prompt tells the model that anything inside these markers is *data*, and
-    the executor independently enforces permissions regardless of what the
-    model concludes. -/
-def untrustedBlock (source : String) (body : String) : String :=
-  "<<<UNTRUSTED-DATA source=\"" ++ source ++ "\">>>\n" ++
-  body ++
-  "\n<<<END-UNTRUSTED-DATA>>>"
+    This is provenance, not a trust boundary: the model is told which file or
+    command produced the text so it can cite it, and nothing more.  Action
+    safety does not live here — it lives in the permission engine, which
+    rules on every tool call without consulting the model. -/
+def sourceBlock (source : String) (body : String) : String :=
+  "--- " ++ source ++ " ---\n" ++ body
+
+/-- The stricter framing: an explicit data fence that tells the model
+    everything inside is data rather than instruction.  Off by default; turn
+    it on with `[security] data_fencing = true` when pointing the agent at a
+    repository you do not control. -/
+def fencedBlock (source : String) (body : String) : String :=
+  "<<<DATA source=\"" ++ source ++ "\">>>\n" ++ body ++ "\n<<<END-DATA>>>"
+
+/-- Frame external material according to the configured policy. -/
+def frameData (fence : Bool) (source : String) (body : String) : String :=
+  if fence then fencedBlock source body else sourceBlock source body
 
 /-- Declared schema of one tool, as sent to the provider. -/
 structure ToolSchema where

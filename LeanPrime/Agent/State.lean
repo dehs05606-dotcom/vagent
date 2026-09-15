@@ -278,6 +278,9 @@ structure AgentState where
   touchedFiles : List String := []
   /-- User steering received mid-run, to be folded into the next model call. -/
   pendingSteer : List String := []
+  /-- Whether the operator's directives have been put to the model for a
+      closing account.  Asked once per run. -/
+  adherenceChecked : Bool := false
   cancelled : Bool := false
   deriving Inhabited
 

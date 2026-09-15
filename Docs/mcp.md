@@ -29,7 +29,9 @@ path as a built-in:
    an MCP tool should default to `high` risk with the permissions its
    description implies, not to whatever the server claims.
 3. **Audit** of the decision and the execution.
-4. **`untrustedBlock` fencing** of the result, and the same output clamps.
+4. **Source labelling** of the result, and the same output clamps. An MCP
+   server is third-party by definition, so its results are a good reason to
+   turn `[security] data_fencing` on even when working in your own repository.
 
 There must be no bypass. A tool that skipped the permission engine because it
 came from MCP would make every proof in `Verification/SecurityProofs.lean`

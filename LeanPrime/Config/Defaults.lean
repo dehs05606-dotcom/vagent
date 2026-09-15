@@ -53,6 +53,25 @@ def defaultUi : UiConfig := {
 def defaultDeniedCommands : List String :=
   ["shutdown", "reboot", "halt", "poweroff", "mkfs", "fdisk", "dd", "sudo", "su", "doas"]
 
+/-- Workspace files consulted for project-level instructions, highest
+    priority first.  These are how a repository states its own conventions
+    to the agent. -/
+def defaultProjectPromptFiles : List String :=
+  ["LEANPRIME.md", "AGENTS.md", "CLAUDE.md", ".leanprime/system.md"]
+
+def defaultPromptConfig : PromptConfig := {
+  mode              := .prepend
+  text              := none
+  file              := none
+  projectFiles      := defaultProjectPromptFiles
+  -- Re-assert the operator's rules every third model call.  Frequent enough
+  -- that they never fall out of the model's effective attention, rare enough
+  -- that they do not dominate the context budget.
+  reminderEvery     := 3
+  extractDirectives := true
+  adherenceCheck    := true
+}
+
 def defaultConfig (ws : System.FilePath) : Config := {
   provider        := defaultProvider
   approval        := .auto
@@ -66,6 +85,8 @@ def defaultConfig (ws : System.FilePath) : Config := {
   deniedCommands  := defaultDeniedCommands
   shellTimeoutSec := 120
   persistSessions := true
+  dataFencing     := false
+  prompt          := defaultPromptConfig
 }
 
 end LeanPrime

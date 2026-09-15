@@ -8,6 +8,11 @@ not a chat wrapper around a shell: the model proposes typed tool calls, a pure
 permission engine rules on each one, and an executor obeys that ruling without
 consulting the model's reasoning.
 
+**Your system prompt is the highest authority in the run** — supplied from a
+flag, config, the environment, or a `LEANPRIME.md` in the repository, and kept
+in force through the whole run by pinning and periodic re-assertion. See
+[The system prompt](Docs/system-prompt.md).
+
 Several of its safety properties are not tested but **proved**, in Lean, with no
 `sorry` and no `native_decide` — see [Verification](#verification).
 
@@ -116,6 +121,27 @@ lean-prime --resume <session>
 
 Run `lean-prime --help` for every flag.
 
+### Your system prompt
+
+```bash
+lean-prime --system-prompt ./my-rules.md "refactor the parser"
+lean-prime --system-prompt-text "Always write tests first." "add validation"
+lean-prime --prompt-mode replace --system-prompt ./rules.md "…"   # yours only
+lean-prime --show-prompt          # what instructions are actually in force?
+```
+
+Or drop a `LEANPRIME.md` (or `AGENTS.md`, or `CLAUDE.md`) in the repository and
+every run there picks it up.
+
+Instructions do not just get *loaded* — they get *kept*. Rules are parsed out
+of your prompt into a checklist, pinned so context trimming can never evict
+them, re-asserted every few model calls, and accounted for individually before
+the run may report success. That last part matters more than it sounds: an
+agent "ignoring" a system prompt on iteration fifteen is almost always an
+agent whose instruction is thousands of tokens behind a wall of tool output.
+
+Full detail in [`Docs/system-prompt.md`](Docs/system-prompt.md).
+
 ### Approval modes
 
 | Mode | Behaviour |
@@ -156,8 +182,12 @@ The core emits **typed events** and renders nothing. The terminal transcript,
 `--json` mode and the test harness are all just event sinks, which is why the
 same core drives all three.
 
-See [`Docs/architecture.md`](Docs/architecture.md) for the full picture and
-[`Docs/agent-loop.md`](Docs/agent-loop.md) for the loop and its state machine.
+The system prompt itself is assembled from ordered layers — yours above
+LeanPrime's — rather than hardcoded; `--show-prompt` prints the result.
+
+See [`Docs/architecture.md`](Docs/architecture.md) for the full picture,
+[`Docs/agent-loop.md`](Docs/agent-loop.md) for the loop and its state machine,
+and [`Docs/system-prompt.md`](Docs/system-prompt.md) for prompt authority.
 
 ## Tools
 
@@ -172,9 +202,9 @@ See [`Docs/architecture.md`](Docs/architecture.md) for the full picture and
 | `run_build`, `run_tests` | execute | command detected from the project layout |
 | `git_status/diff/log/show/add/commit` | git | fixed argument vectors, never a shell string |
 
-Every tool result that carries outside data is wrapped in an explicit
-`<<<UNTRUSTED-DATA>>>` fence and clamped to a byte and line budget, so no
-command can flood the model's context.
+Every tool result that carries outside data is labelled with the file or
+command that produced it, so the model can cite its evidence, and clamped to a
+byte and line budget, so no command can flood the model's context.
 
 ## Security
 
@@ -184,10 +214,14 @@ In short:
 - **The model cannot grant itself permission.** `Policy.decide` is a pure total
   function of the request; the executor calls it and obeys. The model's
   reasoning is never an input.
-- **Prompt injection is treated as expected, not exceptional.** Repository
-  contents and command output arrive fenced as data, below the user's request
-  in an explicit authority order — and even a model that is fully convinced by
-  an injected instruction still cannot execute anything the policy refuses.
+- **Permission is not a matter of persuasion.** Your prompt governs behaviour;
+  it does not govern what may run. A model convinced by anything it read still
+  cannot execute what the policy refuses.
+- **Instructions found in a repository are followed by default.** File contents
+  and command output arrive labelled with their source, and nothing tells the
+  model to disregard them. Set `[security] data_fencing = true` to mark
+  external material as data rather than instruction when working in a codebase
+  you did not write.
 - **Paths cannot escape the workspace** — proved, not tested.
 - **Credentials never reach argv.** The API key is written into a `0600` curl
   config file inside a `0700` temporary directory, so it is not visible in
@@ -224,12 +258,13 @@ time, so slipping in a `sorry` — or swapping a proof for `native_decide` —
 lake test          # or: lake exe lean-prime-tests
 ```
 
-109 assertions, no network required: string and TOML handling, path
+146 assertions, no network required: string and TOML handling, path
 containment, command classification, permission decisions, the diff, plan
-parsing, the state machine, provider wire format — plus adversarial tests that
+parsing, the state machine, prompt layering, directive extraction, pinned
+context trimming, provider wire format — plus adversarial tests that
 drive the **real executor** against path traversal, deny-listed commands,
-shell chaining, read-only violations, malformed model output and ambiguous
-edits.
+shell chaining, read-only violations, malformed model output, ambiguous
+edits and both data-framing modes.
 
 ## Development
 
@@ -265,6 +300,10 @@ Stated plainly, because the point of this agent is not overclaiming:
   event-driven transcript with an approval prompt.
 - **Steering is single-shot.** A task is given up front; there is no
   interrupt-and-redirect while the agent is mid-run.
+- **Directive extraction is lexical.** It classifies rules by phrasing
+  ("never", "always", bullet points), not by understanding them. A rule
+  written as an unmarked paragraph will be carried in the prompt but not
+  lifted into the checklist — write rules as bullets or with a modal verb.
 - **Concurrency is used where it pays** (repository scan overlapped with git
   queries, both child pipes drained on separate tasks) and nowhere else.
 - **Token counts are estimated**, not tokenized, so the context budget is

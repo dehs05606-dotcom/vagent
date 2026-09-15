@@ -25,7 +25,7 @@ private def gitResult (ctx : ToolContext) (label : String) (r : ProcResult) : To
   let clamped := clampOutput (trim text) ctx.config.limits.maxBytes
     ctx.config.limits.headLines ctx.config.limits.tailLines
   { ok := r.exitCode == 0
-    content := untrustedBlock s!"git:{label}"
+    content := frameData ctx.config.dataFencing s!"git:{label}"
       (if (trim clamped).isEmpty then "(no output)" else clamped)
     display := s!"git {label} — exit {r.exitCode}"
     metadata := Json.mkObj [("exit_code", .num (JsonNumber.fromNat r.exitCode))] }

@@ -21,6 +21,7 @@ import LeanPrime.Agent.Executor
 import LeanPrime.Agent.Verifier
 import LeanPrime.Agent.Prompt
 import LeanPrime.Agent.Planner
+import LeanPrime.Agent.PromptLayers
 import LeanPrime.Context.Manager
 import LeanPrime.Model.Provider
 
@@ -36,6 +37,8 @@ structure RunEnv where
   events    : EventSink
   config    : Config
   workspace : Workspace
+  /-- The assembled system prompt and the operator's extracted rules. -/
+  prompts   : PromptStack
   /-- Poll for user steering typed while the agent was working. -/
   pollSteer : IO (List String)
 
@@ -86,10 +89,16 @@ private def applySteering (env : RunEnv) (st : AgentState) : IO AgentState := do
 
 /-- Trim conversation history when it outgrows the context budget.
 
-    The system prompt and the first user turn are always kept, and so are the
-    most recent turns; the middle is dropped with a marker.  Critical recent
-    tool output is never the part that gets cut. -/
-private def trimHistory (budget : Nat) (msgs : List Message) : List Message := Id.run do
+    Three classes of message survive unconditionally: the system prompt, the
+    original task, and anything marked `pinned` — which is how the
+    operator's instructions and their re-assertions are protected.  Of the
+    rest, the most recent turns are kept and the middle is elided, so recent
+    tool output (what the agent is currently reasoning about) is never what
+    gets cut.
+
+    Pinned messages keep their original position, so the conversation still
+    reads in order after a trim. -/
+def trimHistory (budget : Nat) (msgs : List Message) : List Message := Id.run do
   let total := msgs.foldl (fun a m => a + m.estimateTokens) 0
   if total <= budget then msgs
   else
@@ -100,20 +109,29 @@ private def trimHistory (budget : Nat) (msgs : List Message) : List Message := I
       go budget system keepHead rest
 where
   go (budget : Nat) (system : Message) (keepHead rest : List Message) : List Message := Id.run do
-    let tailCandidates := (rest.drop 1).reverse
-    let mut kept : List Message := []
+    let body := rest.drop 1
+    let indexed := body.zipIdx
+    let pinnedSpend := body.foldl (fun a m => if m.pinned then a + m.estimateTokens else a) 0
+    -- Walk backwards, keeping the most recent unpinned turns that fit.  Track
+    -- positions rather than contents: two turns can carry identical text, and
+    -- matching on content would keep every copy of a repeated message.
+    let mut keepIdx : List Nat := []
     let mut spent := system.estimateTokens +
-      keepHead.foldl (fun a m => a + m.estimateTokens) 0
-    for m in tailCandidates do
+      keepHead.foldl (fun a m => a + m.estimateTokens) 0 + pinnedSpend
+    for (m, i) in indexed.reverse do
+      if m.pinned then continue
       if spent + m.estimateTokens > budget then break
-      kept := m :: kept
+      keepIdx := i :: keepIdx
       spent := spent + m.estimateTokens
-    let dropped := (rest.length - 1) - kept.length
+    let dropped := body.length - body.countP Message.pinned - keepIdx.length
     if dropped == 0 then
       return system :: rest
+    -- Reassemble in original order, so pinned turns stay where they were.
+    let keptOrPinned := indexed.filterMap fun (m, i) =>
+      if m.pinned || keepIdx.contains i then some m else none
     return system :: keepHead ++
       [Message.user s!"[{dropped} earlier turn(s) elided to stay within the context budget]"]
-      ++ kept
+      ++ keptOrPinned
 
 /-- Run the agent until it completes, fails, or is cancelled. -/
 partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
@@ -131,9 +149,19 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
   st ← advance env st .contextReady
 
   let ctxText := buildContext snap task [] (env.config.budget.contextTokens * 3 / 10)
-  let sys := systemPrompt snap.kind.toString snap.isGit env.config.approval env.registry.names
-  st := st.addMessage (Message.system sys)
-  st := st.addMessage (Message.user (taskPrompt task ctxText ++ "\n\n" ++ planningPrompt))
+                   env.config.dataFencing
+  -- The system prompt is the rendered layer stack, so whatever the operator
+  -- supplied leads it and outranks the baseline.
+  st := st.addMessage { Message.system env.prompts.render with pinned := true }
+  st := st.addMessage
+    { Message.user (taskPrompt task ctxText ++ "\n\n" ++ planningPrompt) with pinned := true }
+  -- State the operator's rules once more as an explicit checklist. Prose in
+  -- a system prompt is easy to skim past; an enumerated list is not.
+  if !env.prompts.directives.isEmpty then
+    env.events.emit (.notice
+      s!"{env.prompts.directives.length} operator directive(s) in force")
+    st := st.addMessage
+      { Message.user (reminderMessage env.prompts.directives) with pinned := true }
 
   let execEnv : ExecutorEnv :=
     { registry := env.registry, toolCtx := env.toolCtx, events := env.events }
@@ -159,6 +187,18 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
       break
 
     st := { st with budget := { st.budget with iterations := st.budget.iterations + 1 } }
+
+    -- Re-assert the operator's rules on a cadence.  Adherence decays with
+    -- distance, not with time: by iteration ten the original instruction is
+    -- far behind a wall of tool output and is competing with it for
+    -- attention.  Restating it periodically is what keeps a long run on
+    -- instruction.
+    let cadence := env.config.prompt.reminderEvery
+    if cadence > 0 && !env.prompts.directives.isEmpty
+        && st.budget.iterations > 1 && st.budget.iterations % cadence == 1 then
+      st := st.addMessage
+        { Message.user (reminderMessage env.prompts.directives) with pinned := true }
+
     st := { st with messages := trimHistory env.config.budget.contextTokens st.messages }
 
     -- model call
@@ -239,6 +279,18 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
         st := st.addMessage (Message.user
           "You have not called any tools yet. Stop describing the work and start doing it: \
            make your first tool call now.")
+        continue
+
+      -- Before accepting completion, require the model to account for each
+      -- of the operator's rules.  Asked once per run: the point is a
+      -- deliberate pass over the checklist at the moment it matters, not a
+      -- loop that badgers the model into agreeing.
+      if env.config.prompt.adherenceCheck && !env.prompts.directives.isEmpty
+          && !st.adherenceChecked then
+        st := { st with adherenceChecked := true }
+        env.events.emit (.notice "checking the work against the operator's directives")
+        st := st.addMessage
+          { Message.user (adherenceMessage env.prompts.directives) with pinned := true }
         continue
 
       -- Verify before accepting completion.

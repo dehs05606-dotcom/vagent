@@ -79,7 +79,7 @@ def searchFiles : Tool where
       then s!"\n… {hits.size - shown.length} more matches not shown" else ""
     return .ok {
       ok := true
-      content := untrustedBlock s!"search_files:{query}"
+      content := frameData ctx.config.dataFencing s!"search_files:{query}"
         (if shown.isEmpty then "no matching files" else body ++ note)
       display := s!"search_files \"{query}\" — {hits.size} match(es)"
       metadata := Json.mkObj [("matches", .num (JsonNumber.fromNat hits.size))] }
@@ -142,7 +142,7 @@ def searchText : Tool where
       (hits.toList.map fun h => s!"{h.path}:{h.line}: {h.text}")
     return .ok {
       ok := true
-      content := untrustedBlock s!"search_text:{query}"
+      content := frameData ctx.config.dataFencing s!"search_text:{query}"
         (if hits.isEmpty then s!"no matches in {scanned} files" else body)
       display := s!"search_text \"{truncate query 40}\" — {hits.size} hit(s) in {scanned} files"
       metadata := Json.mkObj
