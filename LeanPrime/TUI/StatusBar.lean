@@ -10,6 +10,10 @@
   the bottom, which is erased before each new transcript line and redrawn
   after it.
 
+  The erase has to clear exactly what the draw wrote.  It once did not —
+  see `statusBarHeight` — and the transcript filled with the rules it left
+  behind.  Both sides now read that one number.
+
   The sequences used are the conservative ones — carriage return, cursor up,
   erase-line — so the block behaves the same under tmux, screen and a plain
   tty.  Without a TTY the block is not drawn at all, which is what keeps
@@ -147,15 +151,29 @@ structure StatusBar where
   enabled : Bool
   color   : Bool
 
-/-- Erase the block if it is on screen.  Four lines: two rules, two content. -/
+/-- How many terminal lines the block occupies.
+
+    `draw` and `erase` both read this, so they cannot disagree. They used to:
+    `draw` emitted four lines (two content, two horizontal rules) while
+    `erase` cleared the blank line below the block and three above it — which
+    is four lines cleared, but the wrong four. The block's topmost line was
+    always one row out of reach and survived. Every event leaked one rule
+    into the scrollback, which over a run buried the transcript in them.
+
+    The rules stay — they are what separates the block from the transcript
+    above it. What changes is that this number is the single place the
+    height is stated, and both sides read it. -/
+def statusBarHeight : Nat := 4
+
+/-- Erase the block if it is on screen. -/
 def StatusBar.erase (b : StatusBar) : IO Unit := do
   if !b.enabled then return
   if !(← b.drawn.get) then return
   let out ← IO.getStdout
-  -- move to the start of the line, then up over the four drawn lines,
-  -- clearing each as we pass it
-  out.putStr "\r\x1b[2K"
-  for _ in [0:3] do
+  -- The cursor sits on the line below the block. Step up over each drawn
+  -- line, clearing it, and finish where the block started.
+  out.putStr "\r"
+  for _ in [0:statusBarHeight] do
     out.putStr "\x1b[1A\x1b[2K"
   out.flush
   b.drawn.set false
@@ -166,8 +184,13 @@ def StatusBar.draw (b : StatusBar) : IO Unit := do
   if ← b.drawn.get then b.erase
   let m ← b.model.get
   let width ← terminalWidth
-  let (first, second) := m.lines width
-  let rule := String.ofList (List.replicate width '─')
+  -- One column short of the terminal. A line that fills the width exactly
+  -- leaves the cursor in the wrap-pending state, and the newline after it
+  -- then costs a second row — which would put the block's real height out
+  -- of step with `statusBarHeight` and start the leak all over again.
+  let inner := if width > 1 then width - 1 else width
+  let (first, second) := m.lines inner
+  let rule := String.ofList (List.replicate inner '─')
   let out ← IO.getStdout
   let accent := match m.mode with
     | "unrestricted" => Ansi.yellow

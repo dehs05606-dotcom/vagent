@@ -14,11 +14,20 @@ namespace LeanPrime
     `{{TASK}}` is the only placeholder that cannot be filled yet, and it
     does not affect anything the banner reports, so it is substituted with
     a marker and the prompt is loaded again with the real task once there
-    is one. -/
-private def promptForTask (cfg : Config) (color : Bool) : IO (Option String) := do
+    is one.
+
+    `full` draws the whole opening screen; with it off only the frame is
+    drawn, which is what the prompt between two tasks wants — the wordmark
+    belongs at the start of a session, not above every turn. -/
+private def promptForTask (cfg : Config) (color : Bool) (full : Bool := true)
+    : IO (Option String) := do
   let stdin ← IO.getStdin
   if !(← stdin.isTty) then return none
   let width ← terminalWidth
+  if !full then
+    let line ← readInBox width color
+    let t := trim line
+    return if t.isEmpty then none else some t
   let registry := Registry.forMode cfg.approval
   match ← buildPrompts cfg registry "(not yet given)" with
   | .error e =>
@@ -69,6 +78,26 @@ private def executeTask (cfg : Config) (opts : CliOptions) (task : String)
     | .completed => 0
     | .cancelled => 130
     | _ => 1
+
+/-- Run tasks until the user presses enter on an empty frame.
+
+    The frame coming back after a reply is the point: a prompt that appears
+    once, scrolls away with the transcript and never returns leaves you with
+    nowhere to type and no way to tell whether the program is still running.
+
+    Each task starts a fresh conversation. Carrying history between them
+    would need the trimming, custody and directive machinery to span turns,
+    and doing that quietly would change what "the run" means to every layer
+    that reasons about one. `--resume` is the deliberate version of that. -/
+private partial def interactiveLoop (cfg : Config) (opts : CliOptions)
+    (color : Bool) (first : Bool) : IO UInt32 := do
+  match ← promptForTask cfg color (full := first) with
+  | none => return 0
+  | some task =>
+    -- The frame (and, the first time, the banner above it) is already on
+    -- screen, so the run must not draw it again.
+    let _ ← executeTask cfg opts task [] (bannerShown := true)
+    interactiveLoop cfg opts color false
 
 /-- Entry point. -/
 def main (argv : List String) : IO UInt32 := do
@@ -148,11 +177,6 @@ def main (argv : List String) : IO UInt32 := do
       | .run task? =>
         match task? with
         | some t => executeTask cfg opts t []
-        | none =>
-          -- The idle screen already drew the banner and read the task from
-          -- inside its frame, so the run must not draw it a second time.
-          match ← promptForTask cfg color with
-          | none => return 0
-          | some t => executeTask cfg opts t [] (bannerShown := true)
+        | none => interactiveLoop cfg opts color true
 
 end LeanPrime

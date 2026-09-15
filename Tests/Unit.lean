@@ -32,6 +32,7 @@ import LeanPrime.Agent.Loop
 import LeanPrime.Model.Catalog
 import LeanPrime.TUI.Banner
 import LeanPrime.App.Cli
+import LeanPrime.TUI.StatusBar
 
 open LeanPrime Tests Lean
 
@@ -163,6 +164,29 @@ def runPresentation (r : Runner) : IO Unit := do
   check r "header and footer fit a narrow width"
     ((bannerFooter bInfo 40 false :: bannerHeader bInfo 40 false).all
       (fun l => visibleLength l <= 40))
+
+  section_ "status block accounting"
+  -- The block leaked a rule per event because `draw` emitted four lines and
+  -- `erase` cleared the wrong four. Both now read `statusBarHeight`, and the
+  -- drawn height has to keep matching it.
+  let barModel : StatusModel := {
+    phase := .executing, activity := "edit_file src/a.ts"
+    promptOrigin := "SystemPrompt.lean", directives := 8, model := "muse-1.3" }
+  let (l1, l2) := barModel.lines 79
+  -- two content lines plus the rule above and below
+  checkEq r "the block is four lines tall" statusBarHeight 4
+  check r "the content lines fit inside the width"
+    (l1.length + 2 <= 79 && l2.length + 2 <= 79)
+  -- A line that fills the width exactly wraps, which would desync the height.
+  check r "a drawn line never reaches the terminal width"
+    (let w := 80
+     let inner := w - 1
+     let (a, b) := barModel.lines inner
+     a.length + 2 < w && b.length + 2 < w)
+  check r "the first line carries the phase" (containsSubstr l1 "executing")
+  check r "the second line carries the prompt source"
+    (containsSubstr l2 "SystemPrompt.lean")
+  check r "the second line carries the model" (containsSubstr l2 "muse-1.3")
 
   section_ "version string"
   -- The banner prefixes its own "v", so the number must not carry one, and
