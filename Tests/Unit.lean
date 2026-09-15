@@ -31,6 +31,7 @@ import LeanPrime.Agent.Interlock
 import LeanPrime.Agent.Loop
 import LeanPrime.Model.Catalog
 import LeanPrime.TUI.Banner
+import LeanPrime.App.Cli
 
 open LeanPrime Tests Lean
 
@@ -140,6 +141,38 @@ def runPresentation (r : Runner) : IO Unit := do
     ((wordmarkFor 40).length == 1)
   check r "the narrow banner still fits"
     ((renderBanner bInfo 40 false "t").all (fun l => visibleLength l <= 40))
+
+  section_ "idle screen"
+  -- The idle screen and the running screen must be the same object, not two
+  -- things that happen to look alike: the header and footer the interactive
+  -- prompt draws are the ones renderBanner uses.
+  let header := bannerHeader bInfo 80 false
+  let footer := bannerFooter bInfo 80 false
+  check r "the header is a prefix of the full banner"
+    (banner.take header.length == header)
+  check r "the footer appears in the full banner"
+    (banner.contains footer)
+  check r "the header ends on the status row"
+    ((header.getLast?).any (fun l => containsSubstr l "muse-1.3"))
+  check r "the header carries no box"
+    (header.all (fun l => !containsSubstr l "╭" && !containsSubstr l "╰"))
+  check r "the footer names the prompt source"
+    (containsSubstr footer "SystemPrompt.lean")
+  check r "header and footer fit the width"
+    ((footer :: header).all (fun l => visibleLength l <= 80))
+  check r "header and footer fit a narrow width"
+    ((bannerFooter bInfo 40 false :: bannerHeader bInfo 40 false).all
+      (fun l => visibleLength l <= 40))
+
+  section_ "version string"
+  -- The banner prefixes its own "v", so the number must not carry one, and
+  -- must not repeat the program name either.
+  check r "the banner version is bare"
+    (!containsSubstr versionNumber "v" && !containsSubstr versionNumber "lean-prime")
+  check r "the full version names the program"
+    (containsSubstr LeanPrime.versionString "lean-prime")
+  check r "the full version contains the number"
+    (containsSubstr LeanPrime.versionString versionNumber)
 
   section_ "ansi-aware measurement"
   checkEq r "plain text measures as written" (visibleLength "abc") 3

@@ -8,13 +8,46 @@ not a chat wrapper around a shell: the model proposes typed tool calls, a pure
 permission engine rules on each one, and an executor obeys that ruling without
 consulting the model's reasoning.
 
-**Your system prompt is the highest authority in the run** — supplied from a
-flag, config, the environment, or a `LEANPRIME.md` in the repository, and kept
-in force through the whole run by pinning and periodic re-assertion. See
-[The system prompt](Docs/system-prompt.md).
+**Your system prompt is the highest authority in the run** — loaded from a
+single `SystemPrompt.lean`, sealed under five digests so a mid-run change is
+caught, kept in force by pinning and re-assertion, and enforced mechanically:
+rules about the reply's text reject a reply, and rules about behaviour block
+the tool call before it runs. See [The system prompt](Docs/system-prompt.md).
 
 Several of its safety properties are not tested but **proved**, in Lean, with no
 `sorry` and no `native_decide` — see [Verification](#verification).
+
+Run it with no task and it opens on this, with the cursor in the frame:
+
+```
+            █     █████  ███  █   █   ████  ████  █████ █   █ █████
+            █     █     █   █ ██  █   █   █ █   █   █   ██ ██ █
+            █     ████  █████ █ █ █   ████  ████    █   █ █ █ ████
+            █     █     █   █ █  ██   █     █  █    █   █   █ █
+            █████ █████ █   █ █   █   █     █   █ █████ █   █ █████
+
+                              v0.1.0 (Lean 4.34.0)
+
+             TIP: run with --show-prompt to see every rule in force
+
+--unrestricted to remove the permission engine · --review for adversarial review
+      --list-models to switch model · --json for a machine-readable stream
+
+             Tools (16) ✓  Rules (8) ✓  Enforced (5) ✓  Gate (1) ✓
+
+Auto · safe actions run, the rest ask                                   muse-1.3
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ › Review this code for security issues                                       │
+╰──────────────────────────────────────────────────────────────────────────────╯
+SystemPrompt.lean · 8 rules · 0 on text · 5 on behaviour          no config file
+```
+
+Every figure on it is read from the resolved configuration, so it cannot claim
+enforcement that is not in force: a prompt with no extracted rules renders
+`no rules extracted` and a red cross, not a green tick.
+
+Give it a task on the command line instead and the same screen appears with
+the task already in the frame, followed by the transcript:
 
 ```
 lean-prime  oc/muse-spark-1.3-contributor

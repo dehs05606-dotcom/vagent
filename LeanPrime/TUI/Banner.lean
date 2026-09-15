@@ -156,8 +156,7 @@ def taskBox (width : Nat) (c : Bool) (task : String) : List String :=
 /-! ### Assembly -/
 
 /-- The full opening screen, as lines ready to print. -/
-def renderBanner (b : BannerInfo) (width : Nat) (c : Bool) (task : String)
-    : List String :=
+def bannerHeader (b : BannerInfo) (width : Nat) (c : Bool) : List String :=
   let w := width
   let art := (wordmarkFor w).map fun row =>
     centerStyled w (style c cyan row)
@@ -190,20 +189,29 @@ def renderBanner (b : BannerInfo) (width : Nat) (c : Bool) (task : String)
     if left.length + right.length < w then w - left.length - right.length else 1
   let statusRow :=
     style c bold left ++ String.ofList (List.replicate gap ' ') ++ style c magenta right
-  let promptRow :=
-    let ruleText :=
-      if b.directives == 0 then "no rules extracted"
-      else s!"{b.directives} rules · {b.textRules} on text · {b.behaviorRules} on behaviour"
-    let cfg := match b.configPath with
-      | some p => p
-      | none => "no config file"
-    let cfgFit := truncate cfg (w / 2)
-    let l := truncate s!"{b.promptOrigin} · {ruleText}"
-      (if w > cfgFit.length + 3 then w - cfgFit.length - 3 else w)
-    let g := if l.length + cfgFit.length < w then w - l.length - cfgFit.length else 1
-    style c grey l ++ String.ofList (List.replicate g ' ') ++ style c grey cfgFit
   [""] ++ art ++ [""] ++ [version, ""] ++ [tip, ""] ++ [hints1, hints2, ""]
-    ++ [caps, ""] ++ [statusRow] ++ taskBox w c task ++ [promptRow, ""]
+    ++ [caps, ""] ++ [statusRow]
+
+/-- The line under the box: where the prompt came from, and which config
+    file (if any) was read. -/
+def bannerFooter (b : BannerInfo) (width : Nat) (c : Bool) : String :=
+  let w := width
+  let ruleText :=
+    if b.directives == 0 then "no rules extracted"
+    else s!"{b.directives} rules · {b.textRules} on text · {b.behaviorRules} on behaviour"
+  let cfg := match b.configPath with
+    | some p => p
+    | none => "no config file"
+  let cfgFit := truncate cfg (w / 2)
+  let l := truncate s!"{b.promptOrigin} · {ruleText}"
+    (if w > cfgFit.length + 3 then w - cfgFit.length - 3 else w)
+  let g := if l.length + cfgFit.length < w then w - l.length - cfgFit.length else 1
+  style c grey l ++ String.ofList (List.replicate g ' ') ++ style c grey cfgFit
+
+/-- The whole screen, with the task already known. -/
+def renderBanner (b : BannerInfo) (width : Nat) (c : Bool) (task : String)
+    : List String :=
+  bannerHeader b width c ++ taskBox width c task ++ [bannerFooter b width c, ""]
 
 /-- Print it. -/
 def printBanner (b : BannerInfo) (width : Nat) (c : Bool) (task : String) : IO Unit := do
@@ -211,5 +219,52 @@ def printBanner (b : BannerInfo) (width : Nat) (c : Bool) (task : String) : IO U
   for l in renderBanner b width c task do
     out.putStrLn l
   out.flush
+
+/-! ### Reading the task from inside the box
+
+    The same frame as `taskBox`, but with the cursor parked inside it and a
+    line read from there, so the idle screen and the running screen are the
+    same object rather than two things that happen to look alike.
+
+    Done without raw mode: the three lines are drawn, then the cursor is
+    moved back up into the middle one. The terminal's own line editing does
+    the rest, so backspace, ^U, ^W and paste all behave as the user expects.
+    Pressing enter leaves the cursor on the bottom border, which is already
+    drawn, so stepping past it needs one newline and erases nothing. -/
+
+/-- Columns before the typing position: `│ › `. -/
+private def boxInputColumn : Nat := 4
+
+def readInBox (width : Nat) (c : Bool) : IO String := do
+  let out ← IO.getStdout
+  let stdin ← IO.getStdin
+  let inner := if width > 6 then width - 4 else width
+  let bar := String.ofList (List.replicate (inner + 2) '─')
+  let runway := if inner > 2 then inner - 2 else 0
+  out.putStrLn (style c grey ("╭" ++ bar ++ "╮"))
+  out.putStrLn (style c grey "│ " ++ style c cyan "› "
+    ++ String.ofList (List.replicate runway ' ') ++ style c grey " │")
+  out.putStrLn (style c grey ("╰" ++ bar ++ "╯"))
+  -- up over the bottom border and onto the input line, then in past "│ › "
+  out.putStr s!"\x1b[2A\r\x1b[{boxInputColumn}C"
+  out.flush
+  let line ← stdin.getLine
+  -- enter put us on the bottom border; move below it without redrawing
+  out.putStrLn ""
+  out.flush
+  return line
+
+/-- The idle screen: the banner, an input box, and the footer beneath it.
+    Returns the task, or `none` when the user just pressed enter. -/
+def promptInBox (b : BannerInfo) (width : Nat) (c : Bool) : IO (Option String) := do
+  let out ← IO.getStdout
+  for l in bannerHeader b width c do
+    out.putStrLn l
+  let line ← readInBox width c
+  out.putStrLn (bannerFooter b width c)
+  out.putStrLn ""
+  out.flush
+  let t := trim line
+  return if t.isEmpty then none else some t
 
 end LeanPrime

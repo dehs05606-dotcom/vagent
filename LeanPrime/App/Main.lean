@@ -7,31 +7,35 @@ import LeanPrime.App.Bootstrap
 
 namespace LeanPrime
 
-/-- Read a task from stdin when none was given on the command line and the
-    session is interactive. -/
-private def promptForTask (color : Bool) : IO (Option String) := do
+/-- The idle screen: the full banner with the task read from inside the
+    frame, shown when no task was given on the command line.
+
+    The rule counts here are real — the prompt is loaded to produce them.
+    `{{TASK}}` is the only placeholder that cannot be filled yet, and it
+    does not affect anything the banner reports, so it is substituted with
+    a marker and the prompt is loaded again with the real task once there
+    is one. -/
+private def promptForTask (cfg : Config) (color : Bool) : IO (Option String) := do
   let stdin ← IO.getStdin
   if !(← stdin.isTty) then return none
-  let out ← IO.getStdout
   let width ← terminalWidth
-  out.putStrLn ""
-  for row in wordmarkFor width do
-    out.putStrLn (centerStyled width (Ansi.style color Ansi.cyan row))
-  out.putStrLn ""
-  out.putStrLn (centerStyled width (Ansi.style color Ansi.grey s!"v{versionString}"))
-  out.putStrLn ""
-  out.putStrLn (centerStyled width (Ansi.style color Ansi.grey
-    "describe the task, or press enter to exit"))
-  out.putStrLn ""
-  out.putStr (Ansi.style color Ansi.cyan "› ")
-  out.flush
-  let line ← stdin.getLine
-  let t := trim line
-  return if t.isEmpty then none else some t
+  let registry := Registry.forMode cfg.approval
+  match ← buildPrompts cfg registry "(not yet given)" with
+  | .error e =>
+    -- A prompt that will not load is a fatal condition for the run, but it
+    -- should be reported by the run rather than swallowed here; fall back
+    -- to a bare frame and let the task proceed to the real error.
+    let out ← IO.getStdout
+    out.putStrLn (Ansi.style color Ansi.yellow s!"  {(LPError.render e)}")
+    let line ← readInBox width color
+    let t := trim line
+    return if t.isEmpty then none else some t
+  | .ok prompts =>
+    promptInBox (bannerInfoOf cfg registry prompts cfg.prompt.file) width color
 
 /-- Execute one task and persist the session. -/
 private def executeTask (cfg : Config) (opts : CliOptions) (task : String)
-    (priorTurns : List Message) : IO UInt32 := do
+    (priorTurns : List Message) (bannerShown : Bool := false) : IO UInt32 := do
   let some apiKey ← readApiKey cfg
     | let errOut ← IO.getStderr
       errOut.putStrLn (LPError.render (err .configuration
@@ -46,7 +50,7 @@ private def executeTask (cfg : Config) (opts : CliOptions) (task : String)
   -- The opening screen, before any event is emitted.  Interactive TUI only:
   -- `--plain`, `--json` and a redirected stdout must stay byte-clean.
   let stdoutTty ← (← IO.getStdout).isTty
-  if cfg.output == .tui && stdoutTty && !opts.quiet then
+  if cfg.output == .tui && stdoutTty && !opts.quiet && !bannerShown then
     let width ← terminalWidth
     printBanner (bannerInfoOf cfg registry prompts opts.configPath)
       width (cfg.ui.color && stdoutTty) task
@@ -142,11 +146,13 @@ def main (argv : List String) : IO UInt32 := do
           IO.println s!"resuming session {rec.id}: {rec.task}"
           executeTask cfg opts rec.task rec.toMessages
       | .run task? =>
-        let task ← match task? with
-          | some t => pure (some t)
-          | none => promptForTask color
-        match task with
-        | none => IO.println usage; return 0
+        match task? with
         | some t => executeTask cfg opts t []
+        | none =>
+          -- The idle screen already drew the banner and read the task from
+          -- inside its frame, so the run must not draw it a second time.
+          match ← promptForTask cfg color with
+          | none => return 0
+          | some t => executeTask cfg opts t [] (bannerShown := true)
 
 end LeanPrime

@@ -37,7 +37,7 @@ def shortOrigin : PromptOrigin → String
 def bannerInfoOf (cfg : Config) (registry : Registry) (prompts : PromptStack)
     (cfgPath : Option System.FilePath) : BannerInfo :=
   let report := compileReport prompts.directives
-  { version := versionString
+  { version := s!"{versionNumber} ({leanVersion})"
     model := cfg.provider.model
     approval := cfg.approval
     execution := cfg.execution

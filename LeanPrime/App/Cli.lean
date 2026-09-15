@@ -105,7 +105,12 @@ def usage : String :=
   , "  NO_COLOR                disables colour"
   ]
 
-def versionString : String := "lean-prime 0.1.0 (Lean 4.34.0)"
+/-- Just the number, for places that add their own `v` prefix. -/
+def versionNumber : String := "0.1.0"
+
+def leanVersion : String := "Lean 4.34.0"
+
+def versionString : String := s!"lean-prime {versionNumber} ({leanVersion})"
 
 /-- Parse arguments.  Unknown flags are an error rather than being ignored,
     so a typo never silently changes behaviour. -/
