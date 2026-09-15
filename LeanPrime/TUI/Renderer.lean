@@ -137,6 +137,19 @@ def mkRenderer (color : Bool) (ui : UiConfig) (modelName : String)
       | .injectionBlocked patterns toolName =>
         line (style c red s!"  ⚠ injection attempt blocked in {toolName} output")
         line (style c grey s!"    patterns: {String.intercalate ", " patterns}")
+      | .guardianWarning severity detail =>
+        bar.update (fun m => { m with guardianWarnings := m.guardianWarnings + 1 })
+        line (style c yellow s!"  ⊘ guardian [{severity}]: {truncate detail 120}")
+      | .guardianRejected detail =>
+        bar.update (fun m => { m with guardianRejections := m.guardianRejections + 1 })
+        line (style c red s!"  ✗ guardian rejected: {truncate detail 120}")
+      | .authorityConflict higher lower phrase =>
+        bar.update (fun m => { m with authorityConflicts := m.authorityConflicts + 1 })
+        line (style c yellow s!"  ⚡ authority conflict: [{lower}] vs [{higher}] on \"{truncate phrase 60}\"")
+      | .anchorInjected reason =>
+        line (style c grey s!"  ⚓ anchor injected: {reason}")
+      | .distanceTriggered tokens threshold =>
+        line (style c yellow s!"  ↻ instruction distance: {tokens}/{threshold} tokens — re-asserting")
       | .budgetWarning what used limit =>
         line (style c yellow s!"  ! {what} reached ({used}/{limit})")
       | .errorOccurred err_ =>

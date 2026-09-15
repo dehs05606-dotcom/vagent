@@ -42,6 +42,16 @@ inductive AgentEvent where
   | integrityChecked (passed : Bool) (detail : String)
   /-- A prompt injection attempt was detected in tool output. -/
   | injectionBlocked (patterns : List String) (toolName : String)
+  /-- The guardian detected behavioral drift and issued a warning. -/
+  | guardianWarning (severity : String) (detail : String)
+  /-- The guardian rejected a reply for severe drift. -/
+  | guardianRejected (detail : String)
+  /-- An authority conflict was detected between message levels. -/
+  | authorityConflict (higher : String) (lower : String) (phrase : String)
+  /-- A behavioral anchor was injected at a conversation boundary. -/
+  | anchorInjected (reason : String)
+  /-- Instruction distance triggered an early re-assertion. -/
+  | distanceTriggered (tokensSince : Nat) (threshold : Nat)
   | budgetWarning (what : String) (used : Nat) (limit : Nat)
   | errorOccurred (e : LPError)
   | notice (text : String)
@@ -106,6 +116,20 @@ def toJson : AgentEvent → Json
       [("event", .str "injection_blocked"),
        ("patterns", .arr (ps.toArray.map (fun s => Json.str s))),
        ("tool", .str tool)]
+  | .guardianWarning sev detail => Json.mkObj
+      [("event", .str "guardian_warning"), ("severity", .str sev),
+       ("detail", .str detail)]
+  | .guardianRejected detail => Json.mkObj
+      [("event", .str "guardian_rejected"), ("detail", .str detail)]
+  | .authorityConflict higher lower phrase => Json.mkObj
+      [("event", .str "authority_conflict"), ("higher", .str higher),
+       ("lower", .str lower), ("phrase", .str phrase)]
+  | .anchorInjected reason => Json.mkObj
+      [("event", .str "anchor_injected"), ("reason", .str reason)]
+  | .distanceTriggered tokens threshold => Json.mkObj
+      [("event", .str "distance_triggered"),
+       ("tokens_since", .num (JsonNumber.fromNat tokens)),
+       ("threshold", .num (JsonNumber.fromNat threshold))]
   | .budgetWarning w u l => Json.mkObj
       [("event", .str "budget_warning"), ("what", .str w),
        ("used", .num (JsonNumber.fromNat u)), ("limit", .num (JsonNumber.fromNat l))]

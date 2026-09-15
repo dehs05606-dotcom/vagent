@@ -22,6 +22,7 @@ import LeanPrime.Agent.Verifier
 import LeanPrime.Agent.Prompt
 import LeanPrime.Agent.Planner
 import LeanPrime.Agent.PromptLayers
+import LeanPrime.Agent.Guardian
 import LeanPrime.Context.Manager
 import LeanPrime.Model.Provider
 
@@ -142,6 +143,7 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
   let rules := env.prompts.rules
   let retryLimit := env.config.prompt.maxComplianceRetries
   let promptHash := PromptIntegrity.compute env.prompts.render
+  let mut guardianSt := initGuardian env.prompts.render env.prompts.directives
 
   -- Phase: understanding -> inspecting -> context
   let mut st : AgentState :=
@@ -288,6 +290,44 @@ partial def runAgent (env : RunEnv) (task : String) : IO RunOutcome := do
           if st.complianceRetries > 0 then
             env.events.emit (.complianceAccepted st.complianceRetries)
             st := { st with complianceRetries := 0 }
+
+      -- Guardian: semantic compliance, drift detection, authority enforcement.
+      -- Runs after mechanical compliance passes.  A warning feeds correction
+      -- back; a rejection (severe drift) is treated like a compliance failure.
+      if resp.toolCalls.isEmpty && !resp.content.isEmpty then
+        let verdict := guardianCheck rules guardianSt.semanticConstraints
+          env.prompts.render task resp.content guardianSt
+        guardianSt := updateGuardianState guardianSt verdict
+          resp.usage.totalTokens resp.content
+        match verdict.action with
+        | .reject detail =>
+          st := { st with guardianRejections := st.guardianRejections + 1 }
+          env.events.emit (.guardianRejected (truncate detail 200))
+          st := st.addMessage { Message.user detail with pinned := false }
+          continue
+        | .warn message =>
+          st := { st with guardianWarnings := st.guardianWarnings + 1 }
+          env.events.emit (.guardianWarning
+            (match verdict.driftReport with
+             | some r => r.severity.toString
+             | none => "unknown") (truncate message 200))
+          st := st.addMessage { Message.user message with pinned := false }
+        | .accept => pure ()
+        if verdict.distanceTriggered then
+          st := { st with distanceTriggers := st.distanceTriggers + 1 }
+          env.events.emit (.distanceTriggered
+            guardianSt.distance.tokensSinceLastDirective
+            guardianSt.distance.threshold)
+          if !env.prompts.directives.isEmpty then
+            st := st.addMessage
+              { Message.user (reminderMessage env.prompts.directives) with pinned := false }
+            guardianSt := { guardianSt with distance := guardianSt.distance.reset }
+        if verdict.anchorNeeded && !guardianSt.anchorText.isEmpty then
+          st := { st with anchorsInjected := st.anchorsInjected + 1 }
+          env.events.emit (.anchorInjected "conversation boundary")
+          st := st.addMessage
+            { Message.user guardianSt.anchorText with pinned := false }
+          guardianSt := { guardianSt with turnsSinceAnchor := 0 }
 
       -- a numbered plan in the reply becomes structured plan state
       if st.plan.isNone then

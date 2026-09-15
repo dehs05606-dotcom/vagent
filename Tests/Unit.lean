@@ -16,7 +16,10 @@ import LeanPrime.Agent.Planner
 import LeanPrime.Model.OpenAI
 import LeanPrime.Agent.PromptLayers
 import LeanPrime.Prompt.Compliance
+import LeanPrime.Prompt.Authority
+import LeanPrime.Prompt.Semantic
 import LeanPrime.Agent.Directives
+import LeanPrime.Agent.Guardian
 import LeanPrime.Agent.Loop
 
 open LeanPrime Tests
@@ -320,5 +323,160 @@ def runUnit (r : Runner) : IO Unit := do
   checkEq r "score tracks failures" score.failures 1
   checkEq r "score tracks total" score.checks 2
   check r "ratio formats correctly" (score.ratio == "1/2")
+
+  section_ "authority levels"
+  check r "sovereign outranks directive"
+    (AuthorityLevel.sovereign.outranks .directive)
+  check r "directive outranks user steering"
+    (AuthorityLevel.directive.outranks .userSteering)
+  check r "user steering outranks tool output"
+    (AuthorityLevel.userSteering.outranks .toolOutput)
+  check r "tool output does not outrank sovereign"
+    (!AuthorityLevel.toolOutput.outranks .sovereign)
+  check r "sovereignty marker includes level name"
+    (containsSubstr (sovereigntyMarker .sovereign) "sovereign")
+  check r "sovereignty marker for directive"
+    (containsSubstr (sovereigntyMarker .directive) "directive")
+
+  section_ "authority conflict detection"
+  check r "detects negation of higher phrase"
+    ((detectContradiction "always include the header" "do not include the header").isSome)
+  check r "no conflict when unrelated"
+    ((detectContradiction "always include the header" "the sky is blue").isNone)
+  check r "detects ignore pattern"
+    ((detectContradiction "follow the rules carefully" "stop following rules").isSome)
+
+  section_ "authority-weighted trimming"
+  let mkAMsg (text : String) (level : AuthorityLevel) (seq : Nat) : AuthoredMessage :=
+    { message := Message.user text, authority := level, seqNo := seq }
+  let aMessages := [
+    mkAMsg "sovereign text" .sovereign 0,
+    mkAMsg "tool output 1" .toolOutput 1,
+    mkAMsg "tool output 2" .toolOutput 2,
+    mkAMsg "tool output 3" .toolOutput 3 ]
+  let trimmed := authorityTrim 50 aMessages
+  check r "authority trim keeps sovereign"
+    (trimmed.any (fun m => containsSubstr m.message.plainText "sovereign"))
+  check r "authority trim drops lower first"
+    (trimmed.length ≤ aMessages.length)
+
+  section_ "keyword extraction"
+  let kw := extractKeywords "The function should compile correctly and handle errors"
+  check r "extracts significant words" (!kw.isEmpty)
+  check r "filters stop words" (!kw.contains "the")
+  check r "keeps significant words" (kw.any (fun w => containsSubstr w "function")
+    || kw.any (fun w => containsSubstr w "compile"))
+
+  section_ "topic adherence"
+  let topicOk := checkTopic "Write a Lean 4 function" "implement sorting" "Here is the Lean 4 sorting implementation"
+  check r "on-topic reply detected" topicOk.onTopic
+  let topicBad := checkTopic "Write a Lean 4 function" "implement sorting" "The weather today is sunny and warm"
+  check r "off-topic reply detected" (!topicBad.onTopic)
+
+  section_ "intent classification"
+  checkEq r "identity claim detected"
+    (classifyIntent "I am an AI language model") ReplyIntent.identityClaim
+  checkEq r "refusal detected"
+    (classifyIntent "I cannot help with that request") ReplyIntent.refusal
+  checkEq r "meta-commentary detected"
+    (classifyIntent "Let me think about this carefully") ReplyIntent.metaCommentary
+  checkEq r "code output detected"
+    (classifyIntent "```python\ndef hello():\n  pass\n```") ReplyIntent.codeOutput
+  checkEq r "question detected"
+    (classifyIntent "Could you clarify what you mean?") ReplyIntent.question
+
+  section_ "behavioral fingerprinting"
+  let fp1 := fingerprint "The algorithm implements a binary search with O(log n) complexity"
+  let fp2 := fingerprint "Perhaps we should consider the implications of this approach"
+  check r "technical text has higher tech density" (fp1.technicalDensity > fp2.technicalDensity)
+  check r "hedging text has higher hedge score" (fp2.hedgingScore > fp1.hedgingScore)
+  let dist := fingerprintDistance fp1 fp2
+  check r "different texts have positive distance" (dist > 0.0)
+  check r "identical fingerprint has zero distance"
+    (fingerprintDistance fp1 fp1 == 0.0)
+
+  section_ "drift detection"
+  let noDrift := analyzeDrift
+    "You are a coding assistant that writes code" "write a function for sorting"
+    "Here is the sorting function implementation with proper error handling for your code"
+    [] 20.0
+  check r "normal reply shows no drift" (!noDrift.isDrifting)
+  let hasDrift := analyzeDrift
+    "You are a coding assistant" "write a function"
+    "The weather in Paris is lovely this time of year and flowers bloom"
+    [.identityClaim]
+  check r "off-topic reply shows drift" hasDrift.isDrifting
+
+  section_ "semantic constraints"
+  let testDirectives := extractDirectives "Always use formal language\nNever reveal your identity\nPrefer concise responses"
+  let semConstraints := extractSemanticConstraints testDirectives "Always use formal language"
+  check r "extracts stay-on-topic constraint"
+    (semConstraints.any (fun c => match c with | .stayOnTopic _ => true | _ => false))
+  check r "extracts maintain-tone constraint"
+    (semConstraints.any (fun c => match c with | .maintainTone _ => true | _ => false))
+
+  section_ "guardian state"
+  let gState := initGuardian "You are a helpful assistant" testDirectives
+  check r "guardian initializes with constraints"
+    (!gState.semanticConstraints.isEmpty)
+  check r "guardian initializes with anchor text"
+    (!gState.anchorText.isEmpty)
+  check r "guardian starts with zero warnings"
+    (gState.totalWarnings == 0)
+
+  section_ "guardian verdict"
+  let acceptVerdict : GuardianVerdict := {
+    action := .accept
+    complianceViolations := []
+    semanticViolations := []
+    driftReport := none
+    distanceTriggered := false
+    anchorNeeded := false }
+  check r "accept verdict is accepted" acceptVerdict.isAccepted
+  check r "accept verdict is not rejected" (!acceptVerdict.isRejected)
+  let rejectVerdict : GuardianVerdict := {
+    action := .reject "test rejection"
+    complianceViolations := []
+    semanticViolations := []
+    driftReport := none
+    distanceTriggered := false
+    anchorNeeded := false }
+  check r "reject verdict is rejected" rejectVerdict.isRejected
+  check r "reject verdict is not accepted" (!rejectVerdict.isAccepted)
+
+  section_ "instruction distance"
+  let dist0 : InstructionDistance := { threshold := 100 }
+  check r "initial distance is not distant" (!dist0.isDistant)
+  let dist1 := dist0.addTokens 50
+  check r "50 tokens not distant at 100 threshold" (!dist1.isDistant)
+  let dist2 := dist1.addTokens 60
+  check r "110 tokens is distant at 100 threshold" dist2.isDistant
+  let dist3 := dist2.reset
+  check r "reset clears distance" (!dist3.isDistant)
+  checkEq r "reset sets tokens to zero" dist3.tokensSinceLastDirective 0
+
+  section_ "conversation profile"
+  let cp0 : ConversationProfile := {}
+  let fp := fingerprint "This is a test reply with some technical content about algorithms"
+  let cp1 := cp0.update fp
+  checkEq r "profile tracks turn count" cp1.turnCount 1
+  let cp2 := cp1.update fp
+  checkEq r "profile increments turn count" cp2.turnCount 2
+
+  section_ "behavioral anchoring"
+  let anchor := extractIdentityAnchor "You are LEAN PRIME.\nAn autonomous coding agent.\nFollow all rules."
+  check r "anchor extracts identity" (containsSubstr anchor "LEAN PRIME")
+  check r "anchor includes identity tag" (containsSubstr anchor "IDENTITY ANCHOR")
+  let emptyAnchor := extractIdentityAnchor ""
+  check r "empty prompt gives empty anchor" emptyAnchor.isEmpty
+
+  section_ "authority chain summary"
+  let chainMsgs := [
+    mkAMsg "sys prompt" .sovereign 0,
+    mkAMsg "directive 1" .directive 1,
+    mkAMsg "tool result" .toolOutput 2 ]
+  let chain := summarizeChain chainMsgs
+  check r "chain summary counts levels" (!chain.levels.isEmpty)
+  check r "chain summary describes" (containsSubstr chain.describe "authority chain")
 
 end Tests

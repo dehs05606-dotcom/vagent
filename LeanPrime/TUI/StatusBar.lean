@@ -47,6 +47,11 @@ structure StatusModel where
   complianceFailures : Nat := 0
   /-- Injection attempts blocked. -/
   injectionBlocks : Nat := 0
+  /-- Guardian warnings and rejections. -/
+  guardianWarnings : Nat := 0
+  guardianRejections : Nat := 0
+  /-- Authority conflicts. -/
+  authorityConflicts : Nat := 0
   deriving Inhabited
 
 /-- Terminal width, best effort.  `COLUMNS` is exported by most shells; the
@@ -95,7 +100,11 @@ def StatusModel.lines (m : StatusModel) (width : Nat) : String × String :=
     if m.compliancePasses + m.complianceFailures == 0 then ""
     else
       let inj := if m.injectionBlocks > 0 then s!" · {m.injectionBlocks} blocked" else ""
-      s!" · {m.compliancePasses}✓/{m.complianceFailures}✗{inj}"
+      let guard := if m.guardianWarnings + m.guardianRejections > 0
+        then s!" · G:{m.guardianWarnings}w/{m.guardianRejections}r" else ""
+      let auth := if m.authorityConflicts > 0
+        then s!" · {m.authorityConflicts} conflict" else ""
+      s!" · {m.compliancePasses}✓/{m.complianceFailures}✗{inj}{guard}{auth}"
   let second := layoutLine width
     s!"{m.promptOrigin} · {ruleText}{compText}"
     m.mode

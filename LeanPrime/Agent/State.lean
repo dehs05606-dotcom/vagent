@@ -289,6 +289,16 @@ structure AgentState where
   complianceFailures : Nat := 0
   /-- Injection attempts detected in tool output during this run. -/
   injectionBlocks : Nat := 0
+  /-- Guardian warnings (behavioral drift corrections). -/
+  guardianWarnings : Nat := 0
+  /-- Guardian rejections (severe drift). -/
+  guardianRejections : Nat := 0
+  /-- Authority conflicts detected in the conversation. -/
+  authorityConflicts : Nat := 0
+  /-- Behavioral anchors injected at conversation boundaries. -/
+  anchorsInjected : Nat := 0
+  /-- Times the instruction distance triggered early re-assertion. -/
+  distanceTriggers : Nat := 0
   cancelled : Bool := false
   deriving Inhabited
 
