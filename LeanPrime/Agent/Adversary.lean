@@ -217,7 +217,7 @@ def parseReview (text : String) : Review :=
     Runs at a low temperature: the reviewer's job is a judgement, and a
     judgement that changes between samples is not one. -/
 def runReview (provider : ModelProvider) (ds : List Directive)
-    (task reply : String) (maxTokens : Nat := 2000)
+    (task reply : String) (maxTokens : Nat := 200000)
     : IO (LPResult Review) := do
   if ds.isEmpty then
     return .ok { verdict := .pass, score := 100, rulings := [], summary := "no directives to review against" }

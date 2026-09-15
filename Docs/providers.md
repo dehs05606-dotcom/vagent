@@ -47,8 +47,11 @@ whether any SSE payload arrived at all.
 
 Some models spend a large share of their completion budget on reasoning the
 router does not forward. The symptom is `finish_reason: "length"` with empty
-`content`. The default `max_tokens` is 8192 for this reason; raising it is the
-fix, not lowering temperature. `reasoning_content` is surfaced as
+`content`. The default `max_tokens` is 200000 so the reasoning budget is not
+what runs out; if you still see it, raising `max_tokens` is the fix, not
+lowering temperature. Note that a provider caps this at whatever the model
+actually supports — asking for more than the model allows is an error from
+the provider, not a silent clamp. `reasoning_content` is surfaced as
 `StreamEvent.reasoningDelta` and shown dimmed when the provider sends it.
 
 ### Retry and pacing

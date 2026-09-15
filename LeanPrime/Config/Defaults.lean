@@ -20,7 +20,7 @@ def defaultProvider : ProviderConfig := {
   apiKeyEnv         := "LEANPRIME_API_KEY"
   timeoutSec        := 180
   connectTimeoutSec := 20
-  maxTokens         := 8192
+  maxTokens         := 200000
   temperature       := 0.2
   stream            := true
   maxRetries        := 4
@@ -34,7 +34,7 @@ def defaultBudget : Budget := {
   maxToolCalls    := 120
   maxRepairRounds := 5
   wallClockSec    := 1800
-  contextTokens   := 96000
+  contextTokens   := 1000000
 }
 
 def defaultLimits : OutputLimits := {

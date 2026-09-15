@@ -17,7 +17,7 @@ api_key_env       = "LEANPRIME_API_KEY"
 # Reasoning models spend a large share of the completion budget on thinking
 # that the router may not forward. Too low a value shows up as an empty reply
 # with finish_reason "length".
-max_tokens        = 8192
+max_tokens        = 200000
 temperature       = 0.2
 stream            = true
 
@@ -69,7 +69,7 @@ max_iterations    = 40
 max_tool_calls    = 120
 max_repair_rounds = 5
 wall_clock_sec    = 1800
-context_budget    = 96000
+context_budget    = 1000000
 persist_sessions  = true
 
 [limits]

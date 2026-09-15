@@ -99,12 +99,13 @@ kind            = "openai-compatible"
 base_url        = "https://router.kiosapi.com/v1"
 model           = "oc/muse-spark-1.3-contributor"
 api_key_env     = "LEANPRIME_API_KEY"   # the NAME of the variable, never the key
-max_tokens      = 8192
+max_tokens      = 200000
 min_interval_ms = 6500                  # pace requests under a per-minute cap
 
 [agent]
 approval_mode   = "auto"                # auto | ask | read-only | yolo
 max_iterations  = 40
+context_budget  = 1000000               # trim history once it exceeds this
 ```
 
 ## Use

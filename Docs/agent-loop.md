@@ -94,7 +94,7 @@ else passed.
 | `max_tool_calls` | 120 | a tool-call storm |
 | `max_repair_rounds` | 5 | thrashing on a failure it cannot fix |
 | `wall_clock_sec` | 1800 | a run that never ends |
-| `context_budget` | 96000 | context overflow |
+| `context_budget` | 1000000 | context overflow |
 
 ## Plans
 

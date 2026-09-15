@@ -149,7 +149,7 @@ structure ModelRequest where
   messages    : List Message
   tools       : List ToolSchema := []
   temperature : Float := 0.2
-  maxTokens   : Nat := 8192
+  maxTokens   : Nat := 200000
   stream      : Bool := false
   /-- `auto`, `none`, or `required`. -/
   toolChoice  : String := "auto"
