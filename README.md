@@ -57,6 +57,36 @@ completed  2 check(s) passed: tests, diff; 1 file(s) changed
 That transcript is from a real run, including the failed edit the agent
 recovered from on its own.
 
+## Quick start
+
+Three commands, from nothing to a working agent:
+
+```bash
+curl https://elan.lean-lang.org/elan-init.sh -sSf | sh   # if you don't have Lean
+export LEANPRIME_API_KEY='your-key-here'
+./run.sh "fix the failing authentication tests"
+```
+
+`run.sh` is the single entry point — the equivalent of `python main.py` here.
+It finds the toolchain, brings the build up to date, and runs. The first build
+takes a few minutes; after that the check costs about a second and prints
+nothing, so day-to-day it just starts.
+
+```bash
+./run.sh "explain this repository's architecture"   # run a task
+./run.sh --doctor                                   # check the setup
+./run.sh --list-models                              # see the models
+./run.sh --show-prompt                              # see every rule in force
+./run.sh test                                       # run the test suite
+./run.sh build                                      # build without running
+```
+
+Lean is compiled rather than interpreted, so a build step has to exist
+somewhere; `run.sh` makes it invisible rather than pretending it is absent.
+Nothing depends on the wrapper — `lake build && .lake/build/bin/lean-prime …`
+does exactly the same thing, and the sections below use that longer form
+where it makes the underlying command clearer.
+
 ## Install
 
 Requires [elan](https://github.com/leanprover/elan) (the Lean toolchain
@@ -64,12 +94,15 @@ manager) and `curl`. `git` is strongly recommended.
 
 ```bash
 curl https://elan.lean-lang.org/elan-init.sh -sSf | sh   # if you don't have Lean
-git clone <this repository> && cd lean-prime
-lake build
+git clone <this repository> && cd vagent
+./run.sh build
 ```
 
 The toolchain is pinned in `lean-toolchain` (Lean 4.34.0); `lake` installs it
 automatically on first build.
+
+On Windows, run it from WSL or Git Bash — the script is bash, and the agent
+shells out to POSIX tools.
 
 ## Configure
 
@@ -77,8 +110,11 @@ automatically on first build.
 
 ```bash
 export LEANPRIME_API_KEY='…'        # OPENAI_API_KEY also works
-lake exe lean-prime --doctor        # checks everything and tells you what is missing
+./run.sh --doctor                   # checks everything and tells you what is missing
 ```
+
+To avoid re-exporting it every shell, put the line in `~/.bashrc` or
+`~/.zshrc` — or in a file only you can read (`chmod 600`) and `source` that.
 
 Never put the key in a config file or a repository. `--doctor` reports that a
 key is *present* and how long it is; it never prints the value, and the logger
@@ -111,17 +147,31 @@ context_budget  = 1000000               # trim history once it exceeds this
 ## Use
 
 ```bash
-lean-prime "fix the failing authentication tests"
-lean-prime "explain this repository's architecture" --approval read-only
-lean-prime "implement JWT validation in the auth module"
-lean-prime --json "run the tests and report the result"     # one JSON event per line
-lean-prime --doctor
-lean-prime --sessions
-lean-prime --resume <session>
-lean-prime --list-models
+./run.sh "fix the failing authentication tests"
+./run.sh "explain this repository's architecture" --approval read-only
+./run.sh "implement JWT validation in the auth module"
+./run.sh --json "run the tests and report the result"     # one JSON event per line
+./run.sh --doctor
+./run.sh --sessions
+./run.sh --resume <session>
+./run.sh --list-models
 ```
 
-Run `lean-prime --help` for every flag.
+Run `./run.sh --help` for every flag.
+
+Put the task in quotes. Without them the shell splits it into separate
+arguments and only the first becomes the task.
+
+If you would rather have `lean-prime` on your PATH than type `./run.sh`:
+
+```bash
+./run.sh build
+sudo ln -s "$PWD/.lake/build/bin/lean-prime" /usr/local/bin/lean-prime
+lean-prime "fix the failing authentication tests"
+```
+
+The symlinked binary does not rebuild itself, so re-run `./run.sh build`
+after changing the source.
 
 ### Models
 
@@ -277,24 +327,30 @@ time, so slipping in a `sorry` — or swapping a proof for `native_decide` —
 ## Tests
 
 ```bash
-lake test          # or: lake exe lean-prime-tests
+./run.sh test      # or: lake test
 ```
 
-146 assertions, no network required: string and TOML handling, path
+399 assertions, no network required: string and TOML handling, path
 containment, command classification, permission decisions, the diff, plan
 parsing, the state machine, prompt layering, directive extraction, pinned
-context trimming, provider wire format — plus adversarial tests that
-drive the **real executor** against path traversal, deny-listed commands,
-shell chaining, read-only violations, malformed model output, ambiguous
-edits and both data-framing modes.
+context trimming, provider wire format, the prompt vault's five digests, the
+ledger's hash chain, the sentinel's escalation ladder, the action trace, the
+behavioural predicate engine, the directive compiler, the interlock, the model
+catalog and the banner's layout at both wide and narrow widths — plus
+adversarial tests that drive the **real executor** against path traversal,
+deny-listed commands, shell chaining, read-only violations, malformed model
+output, ambiguous edits and both data-framing modes.
 
 ## Development
 
 ```bash
-lake build                      # build everything, proofs included
-lake test                       # run the suite
-lake exe lean-prime --doctor    # check your environment
+./run.sh build        # build everything, proofs included
+./run.sh test         # run the suite
+./run.sh --doctor     # check your environment
 ```
+
+`run.sh` only ever calls `lake`, so the underlying commands (`lake build`,
+`lake test`, `lake exe lean-prime …`) remain available and behave identically.
 
 The project has **no external Lean dependencies**. JSON comes from Lean's own
 `Lean.Data.Json`; the TOML subset parser, the diff, the search walker and the
