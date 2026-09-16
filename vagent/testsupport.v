@@ -52,3 +52,8 @@ pub fn (c &LineCollector) sink() OutputSink {
 		}
 	})
 }
+
+// math_abs is |x|, for the float comparisons the tests make.
+pub fn math_abs(x f64) f64 {
+	return if x < 0 { -x } else { x }
+}
