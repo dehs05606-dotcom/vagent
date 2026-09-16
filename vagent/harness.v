@@ -39,6 +39,7 @@ pub fn embedded_harnesses() map[string]string {
 		'mutate': mutate_harness
 		'skills': skills_harness
 		'synth':  synth_harness
+		'pyfn':   pyfn_harness
 	}
 }
 

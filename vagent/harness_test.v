@@ -50,11 +50,11 @@ fn test_every_embedded_harness_still_parses_as_python() {
 
 fn test_every_harness_is_named_and_non_empty() {
 	harnesses := embedded_harnesses()
-	for want in ['cov', 'taint', 'kgraph', 'mutate', 'skills', 'synth'] {
+	for want in ['cov', 'taint', 'kgraph', 'mutate', 'skills', 'synth', 'pyfn'] {
 		text := harnesses[want] or { '' }
 		assert text.len > 200, '${want} is ${text.len} chars'
 	}
-	assert harnesses.len == 6
+	assert harnesses.len == 7
 }
 
 fn test_the_control_byte_check_actually_detects_one() {
