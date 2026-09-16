@@ -176,7 +176,7 @@ fn has_dynamic(s string) bool {
 
 // split_segments splits a command line on sequencing and pipes: both start
 // a new simple command.
-fn split_segments(command string) []string {
+pub fn split_segments(command string) []string {
 	mut out := []string{}
 	mut cur := ''
 	mut i := 0
