@@ -226,3 +226,15 @@ pub fn sanitize_messages(mut messages []Message) bool {
 	}
 	return fixed
 }
+
+// MessageBox is a heap-allocated conversation.
+//
+// Several call sites hand the client a callback that must mutate the very
+// conversation being sent — the overflow shrinker above all. V refuses to
+// let a closure capture a reference to a stack slice, so those call sites
+// put the messages in this box, which is safe to capture by pointer.
+@[heap]
+pub struct MessageBox {
+pub mut:
+	items []Message
+}
