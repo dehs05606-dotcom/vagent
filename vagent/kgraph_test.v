@@ -10,12 +10,12 @@ def check(user):
     return True
 '
 
-const kg_main_src = 'import auth
+const kg_main_src = "import auth
 
 
 def run():
-    return auth.login(\'x\')
-'
+    return auth.login('x')
+"
 
 fn kg_fixture(name string) &KnowledgeGraph {
 	mut g := new_knowledge_graph(new_event_log(tmp_log_path(name), 'main', 'test'))
@@ -28,8 +28,7 @@ fn kg_fixture(name string) &KnowledgeGraph {
 
 fn test_indexing_code_names_every_module_and_function() {
 	mut g := kg_fixture('kg1')
-	for id in ['module:auth', 'function:auth.login', 'function:auth.check',
-		'function:main.run'] {
+	for id in ['module:auth', 'function:auth.login', 'function:auth.check', 'function:main.run'] {
 		if _ := g.entity(id) {
 		} else {
 			assert false, 'missing entity ${id}'

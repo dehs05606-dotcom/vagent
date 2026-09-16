@@ -505,7 +505,7 @@ pub fn (g &KnowledgeGraph) stats() map[string]json2.Any {
 pub fn (g &KnowledgeGraph) format_status() string {
 	s := g.stats()
 	mut lines := ['KNOWLEDGE GRAPH',
-		'  entities ${jint(s, "entities")}   relations ${jint(s, "relations")}']
+		'  entities ${jint(s, 'entities')}   relations ${jint(s, 'relations')}']
 	kinds := jmap(s, 'kinds')
 	if kinds.len > 0 {
 		mut keys := kinds.keys()
