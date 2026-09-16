@@ -223,7 +223,7 @@ pub mut:
 	sched_events    []Rec
 	cache_events    []Rec
 	cost_ledger     []Rec
-	head_seq        int = -1
+	head_seq        int    = -1
 	branch          string = 'main'
 }
 
@@ -273,11 +273,11 @@ mut:
 	events_ []Event
 	by_id   map[string]int // event id -> index into events_
 	// branch name -> id of its head event ('' = empty branch)
-	heads     map[string]string
-	has_head  map[string]bool
-	next_seq  int
-	fh        os.File
-	fh_open   bool
+	heads      map[string]string
+	has_head   map[string]bool
+	next_seq   int
+	fh         os.File
+	fh_open    bool
 	since_sync int
 	// SPEED: per-branch chain cache (extended incrementally, O(1) per
 	// append) + fold memoisation keyed by (branch, head id). Event queries
@@ -399,7 +399,7 @@ pub:
 // causation_id = the event that directly caused this one,
 // correlation_id = the goal clause this ultimately serves.
 pub fn (mut l EventLog) append(typ string, data map[string]json2.Any, opts AppendOpts) Event {
-	l.mu.@lock()
+	l.mu.lock()
 	defer {
 		l.mu.unlock()
 	}
@@ -418,8 +418,7 @@ fn (mut l EventLog) append_locked(typ string, data map[string]json2.Any, opts Ap
 	sess := opts.session or { l.session }
 	// default causation: the branch's current head caused this event
 	caus := if c := opts.causation_id { ?string(c) } else { parent_id }
-	eid := compute_event_id(seq, parent_id, br, ts, typ, data, sess, opts.actor,
-		caus, opts.correlation_id, opts.provenance)
+	eid := compute_event_id(seq, parent_id, br, ts, typ, data, sess, opts.actor, caus, opts.correlation_id, opts.provenance)
 	ev := Event{
 		seq:            seq
 		id:             eid
@@ -528,7 +527,7 @@ fn (mut l EventLog) event_at_locked(branch string, seq int) ?Event {
 
 // events returns the events of a branch, oldest first.
 pub fn (mut l EventLog) events(branch string) []Event {
-	l.mu.@lock()
+	l.mu.lock()
 	defer {
 		l.mu.unlock()
 	}
@@ -552,7 +551,7 @@ pub fn (mut l EventLog) events_upto(branch string, upto_seq int) []Event {
 
 // head is the seq of the branch's head event (-1 for an empty branch).
 pub fn (mut l EventLog) head(branch string) int {
-	l.mu.@lock()
+	l.mu.lock()
 	defer {
 		l.mu.unlock()
 	}
@@ -573,7 +572,7 @@ fn (l &EventLog) head_locked(branch string) int {
 }
 
 pub fn (mut l EventLog) branches() []string {
-	l.mu.@lock()
+	l.mu.lock()
 	defer {
 		l.mu.unlock()
 	}
@@ -583,7 +582,7 @@ pub fn (mut l EventLog) branches() []string {
 }
 
 pub fn (mut l EventLog) get(event_id string) ?Event {
-	l.mu.@lock()
+	l.mu.lock()
 	defer {
 		l.mu.unlock()
 	}
@@ -592,7 +591,7 @@ pub fn (mut l EventLog) get(event_id string) ?Event {
 
 // len is the total number of events ever appended, across every branch.
 pub fn (mut l EventLog) len() int {
-	l.mu.@lock()
+	l.mu.lock()
 	defer {
 		l.mu.unlock()
 	}
@@ -600,7 +599,7 @@ pub fn (mut l EventLog) len() int {
 }
 
 pub fn (mut l EventLog) close() {
-	l.mu.@lock()
+	l.mu.lock()
 	defer {
 		l.mu.unlock()
 	}
@@ -615,7 +614,7 @@ pub fn (mut l EventLog) close() {
 // 'kernel.rewind' marker (which becomes the new head) so it survives
 // reload. Returns the new head seq (the marker's seq).
 pub fn (mut l EventLog) rewind(seq int, branch string) int {
-	l.mu.@lock()
+	l.mu.lock()
 	defer {
 		l.mu.unlock()
 	}
@@ -643,7 +642,9 @@ pub fn (mut l EventLog) rewind(seq int, branch string) int {
 		'branch': json2.Any(br)
 		'from':   json2.Any(current)
 		'to':     json2.Any(target)
-	}, branch: br)
+	},
+		branch: br
+	)
 	return marker.seq
 }
 
@@ -654,12 +655,32 @@ pub fn (mut l EventLog) rewind(seq int, branch string) int {
 // source's full history up to that point; a 'kernel.branch' marker is
 // sealed on it. Returns the branch name.
 pub fn (mut l EventLog) fork(at_seq int, name string) string {
-	l.mu.@lock()
+	l.mu.lock()
 	defer {
 		l.mu.unlock()
 	}
 	src := l.branch
 	at := if at_seq < 0 { l.head_locked(src) } else { at_seq }
+	return l.fork_locked(src, at, name)
+}
+
+// fork_at is fork with the fork point taken literally: a point before the
+// first event leaves the new branch EMPTY rather than defaulting to the
+// current head.
+//
+// The distinction exists because a counterfactual that removes the very
+// first event has no prior event to hang from, and silently forking from the
+// head instead would produce a branch containing exactly the history the
+// caller asked to remove.
+pub fn (mut l EventLog) fork_at(at_seq int, name string) string {
+	l.mu.lock()
+	defer {
+		l.mu.unlock()
+	}
+	return l.fork_locked(l.branch, at_seq, name)
+}
+
+fn (mut l EventLog) fork_locked(src string, at int, name string) string {
 	base := l.event_at_locked(src, at)
 
 	mut new_name := ''
@@ -695,16 +716,18 @@ pub fn (mut l EventLog) fork(at_seq int, name string) string {
 		at_s = b.seq
 	}
 	l.append_locked('kernel.branch', {
-		'from':    json2.Any(src)
-		'at_seq':  json2.Any(at_s)
-		'at_id':   at_id
-		'name':    json2.Any(new_name)
-	}, branch: new_name)
+		'from':   json2.Any(src)
+		'at_seq': json2.Any(at_s)
+		'at_id':  at_id
+		'name':   json2.Any(new_name)
+	},
+		branch: new_name
+	)
 	return new_name
 }
 
 pub fn (mut l EventLog) checkout(branch string) {
-	l.mu.@lock()
+	l.mu.lock()
 	defer {
 		l.mu.unlock()
 	}
@@ -720,9 +743,7 @@ pub fn (mut l EventLog) verify(branch string) (bool, string) {
 	evs := l.events(branch)
 	mut prev_id := ?string(none)
 	for ev in evs {
-		recomputed := compute_event_id(ev.seq, ev.parent, ev.branch, ev.ts, ev.typ,
-			ev.data, ev.session, ev.actor, ev.causation_id, ev.correlation_id,
-			ev.provenance)
+		recomputed := compute_event_id(ev.seq, ev.parent, ev.branch, ev.ts, ev.typ, ev.data, ev.session, ev.actor, ev.causation_id, ev.correlation_id, ev.provenance)
 		if recomputed != ev.id {
 			return false, 'seq ${ev.seq}: content hash mismatch'
 		}
@@ -743,7 +764,7 @@ pub fn (mut l EventLog) verify(branch string) (bool, string) {
 // file change or dollar spent traces back to the human instruction that
 // started it.
 pub fn (mut l EventLog) why(event_id string, limit int) []Event {
-	l.mu.@lock()
+	l.mu.lock()
 	defer {
 		l.mu.unlock()
 	}
@@ -768,26 +789,24 @@ pub fn (mut l EventLog) why(event_id string, limit int) []Event {
 // ---------------------------------------------------------------------------
 
 // mutating_tools — tool name -> whether it mutates the filesystem
-const mutating_tools = ['write_file', 'edit_file', 'create_directory', 'copy_path',
-	'move_path', 'delete_path']
+const mutating_tools = ['write_file', 'edit_file', 'create_directory', 'copy_path', 'move_path',
+	'delete_path']
 
 // advanced_event_types are the event types of the advanced subsystems,
 // folded into State.advanced_events.
 pub const advanced_event_types = ['compile.plan', 'compile.wave', 'compile.done',
-	'evolution.generation', 'evolution.deployed', 'evolution.rollback',
-	'brain.remembered', 'brain.recalled', 'brain.consolidated', 'brain.forgotten',
-	'merge.started', 'merge.merged', 'merge.conflict', 'theater.counterfactual',
-	'debate.round', 'debate.verdict', 'debate.calibration', 'market.announce',
-	'market.bid', 'market.award', 'market.settle',
+	'evolution.generation', 'evolution.deployed', 'evolution.rollback', 'brain.remembered',
+	'brain.recalled', 'brain.consolidated', 'brain.forgotten', 'merge.started', 'merge.merged',
+	'merge.conflict', 'theater.counterfactual', 'debate.round', 'debate.verdict', 'debate.calibration',
+	'market.announce', 'market.bid', 'market.award', 'market.settle', 
 	// v6 advanced subsystems
-	'verify.plan', 'verify.violation', 'verify.trace', 'mcts.search', 'mcts.best',
-	'causal.edge', 'causal.intervention', 'bandit.pull', 'bandit.update', 'mesh.node',
-	'mesh.task', 'mesh.result', 'meta.role.drafted', 'meta.role.sealed',
-	'meta.role.rejected', 'synth.tool.drafted', 'synth.tool.tested',
-	'synth.tool.registered', 'ci.watch', 'ci.run', 'ci.streak', 'tuner.trial',
-	'tuner.best', 'dual.route', 'dual.escalation', 'world.impact', 'world.learn',
-	'race.start', 'race.winner', 'race.cancel', 'homeo.check', 'homeo.repair',
-	'attention.auction', 'fabric.assert', 'fabric.retract']
+	'verify.plan', 'verify.violation', 'verify.trace', 'mcts.search', 'mcts.best', 'causal.edge',
+	'causal.intervention', 'bandit.pull', 'bandit.update', 'mesh.node', 'mesh.task', 'mesh.result',
+	'meta.role.drafted', 'meta.role.sealed', 'meta.role.rejected', 'synth.tool.drafted',
+	'synth.tool.tested', 'synth.tool.registered', 'ci.watch', 'ci.run', 'ci.streak', 'tuner.trial',
+	'tuner.best', 'dual.route', 'dual.escalation', 'world.impact', 'world.learn', 'race.start',
+	'race.winner', 'race.cancel', 'homeo.check', 'homeo.repair', 'attention.auction', 'fabric.assert',
+	'fabric.retract']
 
 // tagged copies `d` and stamps the event type into it, matching the Python
 // `{"type": t, **d}` merge used by every bucketed subsystem.
@@ -876,8 +895,7 @@ pub fn fold_apply(mut st State, ev &Event) {
 		'spec.prefetch', 'spec.hit', 'spec.miss', 'spec.evict' {
 			st.spec_events << tagged(t, d)
 		}
-		'daemon.mission', 'daemon.checkpoint', 'daemon.tick', 'daemon.wake',
-		'daemon.done' {
+		'daemon.mission', 'daemon.checkpoint', 'daemon.tick', 'daemon.wake', 'daemon.done' {
 			st.daemon_events << tagged(t, d)
 		}
 		'heal.captured', 'heal.hypothesis', 'heal.patch', 'heal.retry', 'heal.lesson' {
@@ -1016,7 +1034,7 @@ pub fn fold_apply(mut st State, ev &Event) {
 // calls inside one turn cost near-zero instead of O(n) each. Rewinds
 // naturally miss the cache and rebuild.
 pub fn fold(mut log EventLog, branch string) State {
-	log.mu.@lock()
+	log.mu.lock()
 	defer {
 		log.mu.unlock()
 	}
@@ -1029,7 +1047,7 @@ pub fn fold(mut log EventLog, branch string) State {
 // event with seq <= from_seq — used for session-scoped projections (budget
 // spend etc.) without mutating or copying the log.
 pub fn fold_window(mut log EventLog, branch string, upto_seq int, from_seq int) State {
-	log.mu.@lock()
+	log.mu.lock()
 	defer {
 		log.mu.unlock()
 	}
