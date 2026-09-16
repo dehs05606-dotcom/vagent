@@ -146,3 +146,42 @@ fn test_nested_groups_and_alternation() {
 	assert group_text(line, &m, 3) == '1.1'
 	assert !re.matches('PUT /api HTTP/1.1')
 }
+
+fn test_lookahead_asserts_without_consuming() {
+	// the shape the specification's @output rules use
+	re := compile_regex(r'(?i)tests? (pass|fail)\w*(?![^.]*exit)') or { panic(err) }
+	assert re.matches('The tests pass.')
+	assert !re.matches('tests pass with exit 0.')
+
+	// positive lookahead
+	pos := compile_regex(r'foo(?=bar)') or { panic(err) }
+	m := pos.search('foobar') or { panic('no match') }
+	assert m.start == 0 && m.end == 3, '${m.start}..${m.end}'
+	assert !pos.matches('foobaz')
+
+	// it is zero-width: the assertion's text is still available afterwards
+	both := compile_regex(r'(?=ab)a\w') or { panic(err) }
+	assert both.full_match('ab')
+
+	// a negative lookahead at the end of the pattern
+	neg := compile_regex(r'\d+(?!%)') or { panic(err) }
+	assert neg.matches('42 items')
+
+	// alternation inside the assertion works like anywhere else
+	alt := compile_regex(r'x(?!(a|b))') or { panic(err) }
+	assert alt.matches('xc')
+	assert !alt.matches('xa')
+	assert !alt.matches('xb')
+
+	// lookbehind and named groups are still refused, and say so
+	if _ := compile_regex(r'(?<=a)b') {
+		assert false, 'lookbehind must be refused'
+	} else {
+		assert err.msg().contains('lookbehind')
+	}
+	if _ := compile_regex(r'(?P<name>a)') {
+		assert false, 'named groups must be refused'
+	} else {
+		assert err.msg().contains('named groups')
+	}
+}

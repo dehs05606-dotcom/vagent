@@ -43,6 +43,9 @@ enum RxKind {
 	eol
 	word_b
 	not_word_b
+	// (?=...) and (?!...): match the sub-pattern at this position without
+	// consuming anything, then continue — or fail, for the negative form
+	look
 }
 
 struct RxRange {
@@ -283,8 +286,23 @@ fn (mut p RxParser) parse_atom() !int {
 					if !p.eof() && p.peek() == `:` {
 						p.pos++
 					}
-				} else if k == `P` || k == `<` || k == `=` || k == `!` {
-					return error('named groups and lookaround are not supported')
+				} else if k == `=` || k == `!` {
+					// lookahead. The specification's @output rules use it —
+					// "tests pass" is only a violation when no exit code
+					// follows — so it is supported rather than refused.
+					p.pos++
+					inner_look := p.parse_alt()!
+					if p.eof() || p.peek() != `)` {
+						return error('unbalanced (')
+					}
+					p.pos++
+					return p.add(RxNode{
+						kind:     .look
+						negated:  k == `!`
+						children: [inner_look]
+					})
+				} else if k == `P` || k == `<` {
+					return error('named groups and lookbehind are not supported')
 				} else {
 					return error('unsupported group (?${k}')
 				}
@@ -673,6 +691,17 @@ fn (mut m Matcher) match_node(idx int, pos int, rest []Frame) ?int {
 		}
 		.repeat_ {
 			return m.try_repeat(idx, 0, pos, rest)
+		}
+		.look {
+			// the assertion runs on its own: whatever it captures or
+			// consumes is discarded, because zero-width means zero-width
+			saved := m.caps.clone()
+			hit := m.match_node(n.children[0], pos, []Frame{}) != none
+			m.caps = saved
+			if hit == n.negated {
+				return none
+			}
+			return m.run(rest, pos)
 		}
 	}
 }
