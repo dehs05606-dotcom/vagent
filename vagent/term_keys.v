@@ -41,6 +41,9 @@ pub:
 	kind KeyKind
 	// the rune for .char_, or the control letter for .ctrl ('c' for Ctrl+C)
 	ch rune
+	// for .alt, what the key after the Escape was: Alt+Enter and Alt+x are
+	// both `.alt`, and only this tells them apart
+	alt_of KeyKind = .char_
 	// the raw bytes this key was decoded from, for diagnostics
 	raw string
 }
@@ -115,9 +118,10 @@ pub fn (mut d KeyDecoder) next(flush bool) ?Key {
 		}
 		d.buf = sub.buf.clone()
 		return Key{
-			kind: .alt
-			ch:   inner.ch
-			raw:  '\x1b' + inner.raw
+			kind:   .alt
+			ch:     inner.ch
+			alt_of: inner.kind
+			raw:    '\x1b' + inner.raw
 		}
 	}
 
