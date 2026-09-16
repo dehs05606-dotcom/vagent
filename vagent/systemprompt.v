@@ -270,13 +270,6 @@ __global (
 // cannot be replaced at runtime — see register().
 pub const sovereign_prompts = ['main', 'master', 'scout']
 
-fn init() {
-	lock prompt_registry {
-		prompt_registry['main'] = main_prompt
-		prompt_registry['master'] = master_prompt
-	}
-}
-
 // prompt_get resolves a prompt name to its text (falls back to main).
 pub fn prompt_get(name string) string {
 	rlock prompt_registry {
