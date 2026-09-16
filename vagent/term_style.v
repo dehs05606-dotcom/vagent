@@ -42,6 +42,7 @@ pub:
 	italic    bool
 	underline bool
 	reverse   bool
+	strike    bool
 }
 
 // hex_rgb parses '#rrggbb' into its components. A malformed colour yields
@@ -88,6 +89,9 @@ pub fn (s &Style) ansi() string {
 	if s.reverse {
 		parts << '7'
 	}
+	if s.strike {
+		parts << '9'
+	}
 	if s.fg != '' {
 		r, g, b, ok := hex_rgb(s.fg)
 		if ok {
@@ -108,7 +112,7 @@ pub fn (s &Style) ansi() string {
 
 pub fn (s &Style) is_plain() bool {
 	return s.fg == '' && s.bg == '' && !s.bold && !s.dim && !s.italic
-		&& !s.underline && !s.reverse
+		&& !s.underline && !s.reverse && !s.strike
 }
 
 // Span is a run of text carrying one style — the unit every renderer
@@ -333,6 +337,102 @@ pub fn wrap_width(text string, width int) []string {
 		if line != '' {
 			out << line
 		}
+	}
+	return out
+}
+
+// -- span-aware wrapping -------------------------------------------------------
+
+// wrap_spans breaks a styled line into lines of at most `width` columns,
+// keeping each run's style intact across the break.
+//
+// wrap_width above works on plain strings and is enough for output that
+// carries one colour. Rendered markdown does not: a sentence can hold bold,
+// code and link runs, and re-styling after a naive wrap would repaint the
+// whole line in the last style it saw.
+pub fn wrap_spans(spans []Span, width int) [][]Span {
+	if width <= 0 {
+		return [spans]
+	}
+	// split into words and the spaces between them, each keeping its style
+	mut toks := []Span{}
+	for sp in spans {
+		mut cur := ''
+		for r in sp.text.runes() {
+			if r == ` ` {
+				if cur != '' {
+					toks << span(cur, sp.style)
+					cur = ''
+				}
+				toks << span(' ', sp.style)
+				continue
+			}
+			cur += r.str()
+		}
+		if cur != '' {
+			toks << span(cur, sp.style)
+		}
+	}
+
+	mut out := [][]Span{}
+	mut line := []Span{}
+	mut line_w := 0
+	for tok in toks {
+		tw := display_width(tok.text)
+		if tok.text == ' ' {
+			// a space at the head of a line is the seam of a break: drop it
+			if line_w == 0 {
+				continue
+			}
+			line << tok
+			line_w += tw
+			continue
+		}
+		if line_w + tw <= width {
+			line << tok
+			line_w += tw
+			continue
+		}
+		// the word does not fit: flush, dropping the trailing space
+		if line_w > 0 {
+			for line.len > 0 && line.last().text == ' ' {
+				line.delete_last()
+			}
+			out << line
+			line = []Span{}
+			line_w = 0
+		}
+		if tw <= width {
+			line << tok
+			line_w = tw
+			continue
+		}
+		// a single word wider than the line — hard-break it
+		mut chunk := ''
+		mut chunk_w := 0
+		for r in tok.text.runes() {
+			rw := rune_width(r)
+			if chunk_w + rw > width {
+				out << [span(chunk, tok.style)]
+				chunk = ''
+				chunk_w = 0
+			}
+			chunk += r.str()
+			chunk_w += rw
+		}
+		if chunk != '' {
+			line = [span(chunk, tok.style)]
+			line_w = chunk_w
+		}
+	}
+	for line.len > 0 && line.last().text == ' ' {
+		line.delete_last()
+	}
+	if line.len > 0 {
+		out << line
+	}
+	if out.len == 0 {
+		out << []Span{}
 	}
 	return out
 }

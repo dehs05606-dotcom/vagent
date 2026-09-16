@@ -254,6 +254,10 @@ fn max_int(a int, b int) int {
 	return if a > b { a } else { b }
 }
 
+fn min_int(a int, b int) int {
+	return if a < b { a } else { b }
+}
+
 // InputLayout is the wrapped input area plus where the cursor landed in it.
 pub struct InputLayout {
 pub:
