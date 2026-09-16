@@ -137,8 +137,15 @@ pub const roles = {
 pub const default_role = 'coder'
 
 // role_spec resolves a role, falling back to the default.
+//
+// It reads the LIVE roster rather than the const above, so a role forged
+// during the session is a real role the moment it is sealed.
 pub fn role_spec(role string) RoleSpec {
-	return roles[role] or { roles[default_role] or { RoleSpec{} } }
+	mut reg := role_registry
+	if spec := reg.spec(role) {
+		return spec
+	}
+	return roles[default_role] or { RoleSpec{} }
 }
 
 pub struct WorkerReport {

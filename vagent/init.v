@@ -16,6 +16,9 @@ fn init() {
 		prompt_registry['master'] = master_prompt
 	}
 	calibration = &Calibration{}
+	// the live roster starts as a copy of the compiled-in roles and grows
+	// when meta.v forges a specialist
+	role_registry = new_role_registry()
 	// armed_covenant is set when a Covenant arms a registry; until then the
 	// wrapper falls through to the unguarded handler, which is the same
 	// behaviour as never having armed at all.

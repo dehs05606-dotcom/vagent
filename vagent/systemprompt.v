@@ -222,7 +222,8 @@ pub fn prompt_scout() string {
 
 // prompt_worker is a worker sub-agent's system prompt for the given role.
 pub fn prompt_worker(role string, max_workers int) string {
-	brief := role_briefs[role] or { role_briefs['coder'] or { '' } }
+	mut reg := role_registry
+	brief := reg.brief(role) or { role_briefs['coder'] or { '' } }
 	body := worker_tmpl.replace('{role_brief}', brief).replace('{max_workers}',
 		max_workers.str())
 	return bind_spec(body)
