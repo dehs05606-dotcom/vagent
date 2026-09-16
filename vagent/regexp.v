@@ -363,6 +363,12 @@ fn (mut p RxParser) parse_atom() !int {
 						kind: .not_word_b
 					}) }
 				else {
+					if ch := p.hex_escape(e) {
+						return p.add(RxNode{
+							kind: .char_
+							ch:   ch
+						})
+					}
 					return p.add(RxNode{
 						kind: .char_
 						ch:   unescape_rune(e)
@@ -418,7 +424,7 @@ fn (mut p RxParser) parse_class() !int {
 					continue
 				}
 				else {
-					lo = unescape_rune(e)
+					lo = p.hex_escape(e) or { unescape_rune(e) }
 				}
 			}
 		} else {
@@ -433,7 +439,15 @@ fn (mut p RxParser) parse_class() !int {
 				if p.eof() {
 					return error('dangling backslash in class')
 				}
-				hi = unescape_rune(p.peek())
+				letter := p.peek()
+				p.pos++
+				hi = p.hex_escape(letter) or {
+					// hex_escape leaves pos alone when it does not apply,
+					// so step back to the single-character reading
+					p.pos--
+					unescape_rune(letter)
+				}
+				p.pos--
 			}
 			p.pos++
 			node.ranges << RxRange{
@@ -452,6 +466,37 @@ fn (mut p RxParser) parse_class() !int {
 	}
 	p.pos++ // consume ']'
 	return p.add(node)
+}
+
+// hex_escape reads the digits of a \xHH or \uHHHH escape, whose value
+// cannot be decided from the escape letter alone. `p.pos` sits just after
+// the letter; on success it is advanced past the digits.
+fn (mut p RxParser) hex_escape(letter rune) ?rune {
+	width := match letter {
+		`x` { 2 }
+		`u` { 4 }
+		`U` { 8 }
+		else { return none }
+	}
+	if p.pos + width > p.src.len {
+		return none
+	}
+	mut value := 0
+	for i in 0 .. width {
+		d := hex_value(p.src[p.pos + i]) or { return none }
+		value = value * 16 + d
+	}
+	p.pos += width
+	return rune(value)
+}
+
+fn hex_value(r rune) ?int {
+	return match r {
+		`0`...`9` { int(r - `0`) }
+		`a`...`f` { int(r - `a`) + 10 }
+		`A`...`F` { int(r - `A`) + 10 }
+		else { none }
+	}
 }
 
 fn unescape_rune(e rune) rune {

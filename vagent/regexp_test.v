@@ -185,3 +185,30 @@ fn test_lookahead_asserts_without_consuming() {
 		assert err.msg().contains('named groups')
 	}
 }
+
+fn test_hex_escapes_name_a_character_by_its_code() {
+	// the shape effects.v uses for a quote inside a raw-string pattern
+	q := compile_regex(r'["\x27]') or { panic(err) }
+	assert q.matches("'")
+	assert q.matches('"')
+	assert !q.matches('x')
+
+	// outside a class too
+	bare := compile_regex(r'a\x2Ab') or { panic(err) }
+	assert bare.full_match('a*b')
+	assert !bare.full_match('aab')
+
+	// a range whose ends are hex escapes
+	digits := compile_regex(r'^[\x30-\x39]+$') or { panic(err) }
+	assert digits.matches('907')
+	assert !digits.matches('9a7')
+
+	// \u for anything wider than a byte
+	wide := compile_regex(r'é') or { panic(err) }
+	assert wide.matches('café')
+
+	// a malformed escape falls back to the literal letter rather than
+	// failing the whole pattern
+	short := compile_regex(r'a\xZZ') or { panic(err) }
+	assert short.matches('axZZ')
+}
