@@ -426,16 +426,14 @@ pub fn check_ast_assert(path string, symbol string, kind string, has_parameter s
 			return Verdict{
 				passed: false
 				kind:   'ast_assert'
-				detail: "has_parameter is not supported for kind='class' " +
-					"('${symbol}' is a class)"
+				detail: "has_parameter is not supported for kind='class' " + "('${symbol}' is a class)"
 			}
 		}
 		if has_parameter !in found.params {
 			return Verdict{
 				passed:   false
 				kind:     'ast_assert'
-				detail:   "${symbol}() has no parameter '${has_parameter}' " +
-					'(has: ${found.params.join(", ")})'
+				detail:   "${symbol}() has no parameter '${has_parameter}' " + '(has: ${found.params.join(', ')})'
 				evidence: 'line ${found.line}'
 			}
 		}
@@ -481,8 +479,7 @@ pub fn check_diff_assert(path string, forbid []string, require []string) Verdict
 			return Verdict{
 				passed:   false
 				kind:     'diff_assert'
-				detail:   "forbidden pattern '${pat}' found at ${p}:${line_number(content,
-					byte_idx)}"
+				detail:   "forbidden pattern '${pat}' found at ${p}:${line_number(content, byte_idx)}"
 				evidence: clip_evidence(line_around(content, byte_idx))
 			}
 		}
@@ -603,13 +600,23 @@ pub fn check_tool_delta(command string, delta int, timeout int) Verdict {
 //
 // Every predicate is checked against reality and the verdict is sealed as a
 // 'judge.verdict' event; state is recovered by folding the log.
+// The judge is a heap type, and new_judge hands back a reference.
+//
+// It holds nothing but a log pointer, so it is tempting to pass it around by
+// value — but several subsystems STORE a `&Judge` (the goal contract, the
+// workflow engine). A value returned onto a caller's stack and then pointed
+// at from a longer-lived struct is a dangling pointer the moment that caller
+// returns, and the failure is not a crash: it is a hang, in whatever runs
+// next. Making the type heap-allocated removes the footgun rather than
+// documenting it.
+@[heap]
 pub struct Judge {
 pub mut:
 	log &EventLog
 }
 
-pub fn new_judge(log &EventLog) Judge {
-	return Judge{
+pub fn new_judge(log &EventLog) &Judge {
+	return &Judge{
 		log: unsafe { log }
 	}
 }
@@ -655,8 +662,7 @@ pub fn (j &Judge) failure(verdict Verdict, context string) map[string]json2.Any 
 	mut location := ''
 	if re := compile_regex(r'([^\s:]+):(\d+)') {
 		if m := re.search(verdict.detail) {
-			location = '${group_text(verdict.detail, &m, 1)}:${group_text(verdict.detail,
-				&m, 2)}'
+			location = '${group_text(verdict.detail, &m, 1)}:${group_text(verdict.detail, &m, 2)}'
 		}
 	}
 	ev := if verdict.evidence.len > evidence_limit {
@@ -675,8 +681,7 @@ pub fn (j &Judge) failure(verdict Verdict, context string) map[string]json2.Any 
 		'location':       json2.Any(location)
 		'detail':         json2.Any(verdict.detail)
 		'context':        json2.Any(context)
-		'suggested_next': json2.Any('inspect the evidence, then change the ' +
-			'approach — do not retry the identical action')
+		'suggested_next': json2.Any('inspect the evidence, then change the ' + 'approach — do not retry the identical action')
 	}
 }
 
@@ -698,8 +703,7 @@ pub fn (mut j Judge) check_with_retry(predicate map[string]json2.Any, runs int) 
 				subject = jstr(predicate, 'path')
 			}
 			j.log.append('fact.learned', {
-				'fact': json2.Any('FLAKE: ${jstr(predicate, "type")} ${subject} ' +
-					'fails intermittently')
+				'fact': json2.Any('FLAKE: ${jstr(predicate, 'type')} ${subject} ' + 'fails intermittently')
 				'kind': json2.Any('flake')
 			}, AppendOpts{ actor: 'judge' })
 			return Verdict{
@@ -729,8 +733,7 @@ fn (j &Judge) evaluate(predicate map[string]json2.Any) Verdict {
 			if command.trim_space() == '' {
 				return missing(ptype, 'command')
 			}
-			return check_exit_code(command, jint(predicate, 'expect'),
-				as_timeout(jget(predicate, 'timeout')))
+			return check_exit_code(command, jint(predicate, 'expect'), as_timeout(jget(predicate, 'timeout')))
 		}
 		'file_exists' {
 			path := jstr(predicate, 'path')
@@ -786,8 +789,7 @@ fn (j &Judge) evaluate(predicate map[string]json2.Any) Verdict {
 					detail: "predicate 'text' is empty — it would match any output"
 				}
 			}
-			return check_command_output_contains(command, text, as_timeout(jget(predicate,
-				'timeout')))
+			return check_command_output_contains(command, text, as_timeout(jget(predicate, 'timeout')))
 		}
 		'ast_assert' {
 			path := jstr(predicate, 'path')
@@ -806,8 +808,7 @@ fn (j &Judge) evaluate(predicate map[string]json2.Any) Verdict {
 			if path == '' {
 				return missing(ptype, 'path')
 			}
-			return check_diff_assert(path, jstrs(predicate, 'forbid'), jstrs(predicate,
-				'require'))
+			return check_diff_assert(path, jstrs(predicate, 'forbid'), jstrs(predicate, 'require'))
 		}
 		'file_unchanged' {
 			path := jstr(predicate, 'path')
@@ -825,8 +826,7 @@ fn (j &Judge) evaluate(predicate map[string]json2.Any) Verdict {
 			if command.trim_space() == '' {
 				return missing(ptype, 'command')
 			}
-			return check_tool_delta(command, jint(predicate, 'delta'), as_timeout(jget(predicate,
-				'timeout')))
+			return check_tool_delta(command, jint(predicate, 'delta'), as_timeout(jget(predicate, 'timeout')))
 		}
 		else {
 			return Verdict{

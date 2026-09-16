@@ -10,7 +10,7 @@ fn judge_dir(name string) string {
 	return dir
 }
 
-fn new_test_judge(name string) (&EventLog, Judge) {
+fn new_test_judge(name string) (&EventLog, &Judge) {
 	mut log := new_event_log(tmp_log_path('${name}.jsonl'), 'main', '')
 	return log, new_judge(log)
 }
@@ -40,9 +40,7 @@ fn test_file_predicates() {
 fn test_ast_assert_finds_defs_and_parameters() {
 	dir := judge_dir('ast')
 	f := os.join_path(dir, 'src.py')
-	os.write_file(f, 'import os\n\n\nclass Thing:\n    def method(self, a, b=2):\n' +
-		'        pass\n\n\ndef verify_token(token, leeway=0, *args, **kw):\n' +
-		'    return True\n') or { panic(err) }
+	os.write_file(f, 'import os\n\n\nclass Thing:\n    def method(self, a, b=2):\n' + '        pass\n\n\ndef verify_token(token, leeway=0, *args, **kw):\n' + '    return True\n') or { panic(err) }
 
 	ok := check_ast_assert(f, 'verify_token', 'def', '')
 	assert ok.passed, ok.detail
@@ -69,8 +67,7 @@ fn test_ast_assert_finds_defs_and_parameters() {
 fn test_ast_assert_handles_multiline_signatures() {
 	dir := judge_dir('ast2')
 	f := os.join_path(dir, 'wrap.py')
-	os.write_file(f, 'def build(\n    first: int,\n    second: str = "x",\n' +
-		') -> None:\n    pass\n') or { panic(err) }
+	os.write_file(f, 'def build(\n    first: int,\n    second: str = "x",\n' + ') -> None:\n    pass\n') or { panic(err) }
 	assert check_ast_assert(f, 'build', 'def', 'first').passed
 	assert check_ast_assert(f, 'build', 'def', 'second').passed
 	assert !check_ast_assert(f, 'build', 'def', 'third').passed
@@ -139,7 +136,7 @@ fn test_judge_seals_every_verdict() {
 		'path': json2.Any('/definitely/missing')
 	})
 	j.check({
-		'type': json2.Any('exit_code')
+		'type':    json2.Any('exit_code')
 		'command': json2.Any('exit 0')
 	})
 	verdicts := fold(mut log, '').verdicts
