@@ -141,22 +141,22 @@ pub const role_names = ['researcher', 'coder', 'tester', 'reviewer', 'analyst']
 // TO INSTALL YOUR SPECIFICATION: paste it between the quotes below.
 // Nothing else needs changing — master_prompt() is rebuilt from it.
 
-pub const spec = ''
+pub const master_spec = ''
 
 // spec_chars is the length of the compiled-in specification.
 pub fn spec_chars() int {
-	return spec.len
+	return master_spec.len
 }
 
 // spec_status is a one-line report of the specification compiled into this
 // module.
 pub fn spec_status() string {
-	if spec.trim_space() == '' {
+	if master_spec.trim_space() == '' {
 		return 'master spec is EMPTY — MASTER carries no specification.\n' +
 			'  Paste it into the `spec` constant in systemprompt.v; ' +
 			'there is no file to place.'
 	}
-	return 'master spec: ${thousands(spec.len)} chars, compiled into systemprompt.v'
+	return 'master spec: ${thousands(master_spec.len)} chars, compiled into systemprompt.v'
 }
 
 const spec_banner_rule = '========================================================================'
@@ -179,7 +179,7 @@ fn build_master(s string) string {
 		'as binding.\n' + spec_banner_rule + '\n\n' + s
 }
 
-pub const master_prompt = build_master(spec)
+pub const master_prompt = build_master(master_spec)
 
 // ---------------------------------------------------------------------------
 // Builders — the only functions the rest of the code calls
@@ -201,13 +201,13 @@ pub const master_prompt = build_master(spec)
 // carries the full specification. A specification cheap enough to skip for
 // the workers is one the workers do not follow.
 fn bind_spec(prompt string) string {
-	if spec.trim_space() == '' {
+	if master_spec.trim_space() == '' {
 		return prompt
 	}
 	return prompt + '\n\n' + spec_banner_rule +
 		'\nFULL MASTER SPECIFICATION — binding on you exactly as it is on ' +
 		'the agent that dispatched you. Every invariant and contract below ' +
-		'applies to your work.\n' + spec_banner_rule + '\n\n' + spec
+		'applies to your work.\n' + spec_banner_rule + '\n\n' + master_spec
 }
 
 // prompt_main is the sovereign agent's system prompt.
