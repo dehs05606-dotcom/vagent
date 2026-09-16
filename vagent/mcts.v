@@ -267,3 +267,15 @@ pub fn (mut r Rng) below(n int) int {
 pub fn (mut r Rng) f64() f64 {
 	return f64(r.next() >> 11) / f64(u64(1) << 53)
 }
+
+// gauss draws from the standard normal by Box–Muller. The Gamma sampler in
+// bandit.v needs it, and it belongs next to the generator it draws from.
+pub fn (mut r Rng) gauss() f64 {
+	mut u1 := r.f64()
+	// log(0) is not a number the caller can use
+	for u1 <= 1e-12 {
+		u1 = r.f64()
+	}
+	u2 := r.f64()
+	return math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2)
+}

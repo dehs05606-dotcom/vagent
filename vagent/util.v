@@ -344,3 +344,14 @@ fn math_round(x f64) f64 {
 pub fn quote_arg(s string) string {
 	return "'" + s.replace("'", "'\\''") + "'"
 }
+
+// jf64_or is jf64 with a caller-supplied default for an absent key, so a
+// record written before a field existed reads as that field's prior rather
+// than as zero.
+pub fn jf64_or(m map[string]json2.Any, key string, fallback f64) f64 {
+	v := m[key] or { return fallback }
+	if v is json2.Null {
+		return fallback
+	}
+	return v.f64()
+}
