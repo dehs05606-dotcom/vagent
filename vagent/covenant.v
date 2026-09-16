@@ -57,8 +57,8 @@ import x.json2
 
 const effect_kinds = [effect_write, effect_delete, effect_exec, effect_opaque]
 
-const guard_kinds = ['forbid_tool', 'forbid_path', 'confine_paths',
-	'forbid_content', 'require_content', 'forbid_command', 'forbid_effect']
+const guard_kinds = ['forbid_tool', 'forbid_path', 'confine_paths', 'forbid_content',
+	'require_content', 'forbid_command', 'forbid_effect']
 
 // Guard is one deterministic constraint on a pending tool call.
 pub struct Guard {
@@ -196,8 +196,7 @@ fn parse_guard(clause_id string, rest_in string) (?Guard, string) {
 	}
 	if kind == 'require_content' && where == '' {
 		// an unscoped require_content would block every unrelated write
-		return none, '${clause_id}: require_content needs `where` (a path glob) ' +
-			'so it scopes to the files it means'
+		return none, '${clause_id}: require_content needs `where` (a path glob) ' + 'so it scopes to the files it means'
 	}
 	if kind == 'forbid_tool' && value == '' {
 		return none, '${clause_id}: forbid_tool needs a tool name'
@@ -205,7 +204,7 @@ fn parse_guard(clause_id string, rest_in string) (?Guard, string) {
 	if kind == 'forbid_effect' && value !in effect_kinds {
 		mut known := effect_kinds.clone()
 		known.sort()
-		return none, '${clause_id}: forbid_effect must be one of ${known.join(", ")}'
+		return none, '${clause_id}: forbid_effect must be one of ${known.join(', ')}'
 	}
 	if kind == 'confine_paths' && roots.len == 0 {
 		return none, '${clause_id}: confine_paths needs at least one root'
@@ -299,18 +298,18 @@ fn match_clause_header(line string) ClauseHeader {
 }
 
 fn slugify(title string) string {
-	mut out := ''
+	mut out := []u8{}
 	mut prev_dash := false
 	for c in title.to_lower() {
 		if (c >= `a` && c <= `z`) || (c >= `0` && c <= `9`) {
-			out += c.ascii_str()
+			out << c
 			prev_dash = false
 		} else if !prev_dash {
-			out += '-'
+			out << `-`
 			prev_dash = true
 		}
 	}
-	return out.trim('-')
+	return out.bytestr().trim('-')
 }
 
 fn match_enforce(line string) ?string {
@@ -535,8 +534,7 @@ pub fn evaluate_effects(guards []Guard, effects []Effect, tool string, command s
 							out << Violation{
 								clause: g.clause
 								kind:   g.kind
-								detail: "${e.kind} to '${e.path}' matches forbidden " +
-									"pattern '${x}'${via(&e)}"
+								detail: "${e.kind} to '${e.path}' matches forbidden " + "pattern '${x}'${via(&e)}"
 								path:   e.path
 							}
 							break
@@ -547,8 +545,7 @@ pub fn evaluate_effects(guards []Guard, effects []Effect, tool string, command s
 					out << Violation{
 						clause: g.clause
 						kind:   g.kind
-						detail: 'effects cannot be determined before running, so ' +
-							'this call cannot be shown to avoid ${g.globs} — ${e.reason}'
+						detail: 'effects cannot be determined before running, so ' + 'this call cannot be shown to avoid ${g.globs} — ${e.reason}'
 					}
 				}
 			}
@@ -568,8 +565,7 @@ pub fn evaluate_effects(guards []Guard, effects []Effect, tool string, command s
 						out << Violation{
 							clause: g.clause
 							kind:   g.kind
-							detail: "${e.kind} to '${e.path}' is outside the permitted " +
-								'roots ${g.roots}${via(&e)}'
+							detail: "${e.kind} to '${e.path}' is outside the permitted " + 'roots ${g.roots}${via(&e)}'
 							path:   e.path
 						}
 					}
@@ -578,8 +574,7 @@ pub fn evaluate_effects(guards []Guard, effects []Effect, tool string, command s
 					out << Violation{
 						clause: g.clause
 						kind:   g.kind
-						detail: 'effects cannot be determined before running, so ' +
-							'this call cannot be shown to stay under ${g.roots} — ${e.reason}'
+						detail: 'effects cannot be determined before running, so ' + 'this call cannot be shown to stay under ${g.roots} — ${e.reason}'
 					}
 				}
 			}
@@ -593,8 +588,7 @@ pub fn evaluate_effects(guards []Guard, effects []Effect, tool string, command s
 						out << Violation{
 							clause: g.clause
 							kind:   g.kind
-							detail: "content written to '${e.path}' matches forbidden " +
-								"pattern: '${clip_plain(m.text, 60)}'${via(&e)}"
+							detail: "content written to '${e.path}' matches forbidden " + "pattern: '${clip_plain(m.text, 60)}'${via(&e)}"
 							path:   e.path
 						}
 					}
@@ -610,8 +604,7 @@ pub fn evaluate_effects(guards []Guard, effects []Effect, tool string, command s
 						out << Violation{
 							clause: g.clause
 							kind:   g.kind
-							detail: "'${e.path}' must contain a match for " +
-								"'${g.value}' and does not${via(&e)}"
+							detail: "'${e.path}' must contain a match for " + "'${g.value}' and does not${via(&e)}"
 							path:   e.path
 						}
 					}
@@ -626,8 +619,7 @@ pub fn evaluate_effects(guards []Guard, effects []Effect, tool string, command s
 					out << Violation{
 						clause: g.clause
 						kind:   g.kind
-						detail: "command matches forbidden pattern: '${clip_plain(m.text,
-							60)}'"
+						detail: "command matches forbidden pattern: '${clip_plain(m.text, 60)}'"
 					}
 				}
 			}
@@ -703,8 +695,7 @@ pub fn (c &Covenant) check_effects(effects []Effect) []Violation {
 // title.
 pub fn (c &Covenant) cite(violations []Violation) string {
 	plural_s := if violations.len > 1 { 's' } else { '' }
-	mut lines := ['CovenantViolation: this action is refused by the ' +
-		'specification (${violations.len} clause${plural_s}).']
+	mut lines := ['CovenantViolation: this action is refused by the ' + 'specification (${violations.len} clause${plural_s}).']
 	for v in violations {
 		mut title := ''
 		if idx := c.by_id[v.clause] {
@@ -863,8 +854,7 @@ pub fn (c &Covenant) report() string {
 	if c.clauses.len == 0 {
 		return 'covenant: no specification bound'
 	}
-	mut lines := ['covenant: ${thousands(s.clauses)} clauses · ${s.enforced} enforced ' +
-		'· ${s.guards} guards · ${s.blocked} blocked / ${s.cleared} cleared']
+	mut lines := ['covenant: ${thousands(s.clauses)} clauses · ${s.enforced} enforced ' + '· ${s.guards} guards · ${s.blocked} blocked / ${s.cleared} cleared']
 	for cl in c.enforced_clauses() {
 		hits := c.hits[cl.id] or { 0 }
 		mut kinds := []string{}
@@ -876,13 +866,11 @@ pub fn (c &Covenant) report() string {
 		kinds.sort()
 		mark := if hits > 0 { '●' } else { '○' }
 		plural_s := if hits == 1 { '' } else { 's' }
-		lines << '  ${mark} ${pad_right(cl.id, 16)} ${pad_right(kinds.join(","), 32)} ' +
-			'${hits} block${plural_s}'
+		lines << '  ${mark} ${pad_right(cl.id, 16)} ${pad_right(kinds.join(','), 32)} ' + '${hits} block${plural_s}'
 	}
 	unenforced := c.clauses.len - s.enforced
 	if unenforced > 0 {
-		lines << '  ${thousands(unenforced)} clause(s) carry no @enforce rule ' +
-			'— prose only, not bound to the boundary'
+		lines << '  ${thousands(unenforced)} clause(s) carry no @enforce rule ' + '— prose only, not bound to the boundary'
 	}
 	for e in c.errors {
 		lines << '  !! ${e}'

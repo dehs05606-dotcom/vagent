@@ -162,7 +162,7 @@ pub fn new_agent_in(cfg Config, opts AgentOpts) &Agent {
 		roleforge: new_role_forge(log, unwired_role_drafter, unwired_role_evaluator, 0.6)
 		synth:     new_program_synthesizer(log, unwired_synth_generator)
 		ci:        new_ci_pilot(log, cwd, unwired_ci_runner, 0.0)
-		tuner:     new_parzen_tuner(log, tuner_space(), 0, unsafe { nil })
+		tuner:     new_parzen_tuner(log, agent_tuner_space(), 0, unsafe { nil })
 		dual:      unsafe { nil }
 		world:     new_world_model(log, cwd)
 		racer:     new_racing_universes(log, unwired_universe_runner, unwired_race_verifier, [])
@@ -283,7 +283,7 @@ fn bandit_arms() []string {
 	return out
 }
 
-fn tuner_space() map[string][]string {
+fn agent_tuner_space() map[string][]string {
 	mut keys := []string{}
 	for e in efforts {
 		keys << e.key

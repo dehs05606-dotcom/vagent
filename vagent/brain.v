@@ -55,20 +55,22 @@ fn base_importance(kind string) f64 {
 // rather than run through the regex engine because recall calls it for every
 // memory on every query.
 pub fn brain_tokens(text string) []string {
+	// a rune buffer, not a string: `cur += r.str()` reallocates on every
+	// character and turns one long token into quadratic work
 	mut out := []string{}
-	mut cur := ''
+	mut cur := []rune{}
 	for r in text.to_lower().runes() {
 		if (r >= `a` && r <= `z`) || (r >= `0` && r <= `9`) {
-			cur += r.str()
+			cur << r
 			continue
 		}
-		if cur != '' {
-			out << cur
-			cur = ''
+		if cur.len > 0 {
+			out << cur.string()
+			cur = []rune{}
 		}
 	}
-	if cur != '' {
-		out << cur
+	if cur.len > 0 {
+		out << cur.string()
 	}
 	return uniq_strings(out)
 }
@@ -92,11 +94,11 @@ pub fn jaccard(a string, b string) f64 {
 @[heap]
 pub struct Memory {
 pub mut:
-	id     string
-	store  string
-	text   string
-	kind   string = 'note'
-	created f64
+	id          string
+	store       string
+	text        string
+	kind        string = 'note'
+	created     f64
 	last_review f64
 	// grows with every review
 	strength f64 = 1.0
@@ -231,7 +233,10 @@ fn (b &Brain) save() {
 	}
 	text := json2.encode(json2.Any({
 		'memories': json2.Any(out)
-	}), prettify: true, indent_string: ' ')
+	}),
+		prettify:      true
+		indent_string: ' '
+	)
 	atomic_write_text(b.path, text) or {}
 }
 
@@ -317,13 +322,11 @@ pub fn (mut b Brain) ingest_kernel() int {
 		}
 		match ev.typ {
 			'fact.learned' {
-				b.remember(clip_plain(jstr(ev.data, 'fact'), 400), 'semantic', 'fact',
-					jstr(ev.data, 'kind') == 'goal', []) or { continue }
+				b.remember(clip_plain(jstr(ev.data, 'fact'), 400), 'semantic', 'fact', jstr(ev.data, 'kind') == 'goal', []) or { continue }
 				added++
 			}
 			'deadend.recorded' {
-				b.remember(clip_plain('dead end: ${jstr(ev.data, "reason")}', 400),
-					'semantic', 'dead_end', false, []) or { continue }
+				b.remember(clip_plain('dead end: ${jstr(ev.data, 'reason')}', 400), 'semantic', 'dead_end', false, []) or { continue }
 				added++
 			}
 			'assistant.message' {
@@ -621,8 +624,5 @@ pub fn (b &Brain) stats() BrainStats {
 
 pub fn (b &Brain) format_stats() string {
 	s := b.stats()
-	return 'BRAIN — ${s.total} memories (${s.alive} above the retention floor)\n' +
-		'  working    ${s.by_store["working"]}\n' + '  episodic   ${s.by_store["episodic"]}\n' +
-		'  semantic   ${s.by_store["semantic"]}\n' +
-		'  procedural ${s.by_store["procedural"]}\n' + '  avg retention ${s.avg_retention}'
+	return 'BRAIN — ${s.total} memories (${s.alive} above the retention floor)\n' + '  working    ${s.by_store['working']}\n' + '  episodic   ${s.by_store['episodic']}\n' + '  semantic   ${s.by_store['semantic']}\n' + '  procedural ${s.by_store['procedural']}\n' + '  avg retention ${s.avg_retention}'
 }

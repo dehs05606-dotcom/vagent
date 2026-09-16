@@ -42,21 +42,23 @@ const keep_head = 0.6 // when trimming: keep 60% head, 40% tail
 
 // attention_tokens splits text into lowercase alphanumeric runs.
 fn attention_tokens(text string) map[string]bool {
+	// a byte buffer, not a string: appending to a string reallocates it
+	// each time, which is quadratic in the length of one token
 	mut out := map[string]bool{}
-	mut cur := ''
+	mut cur := []u8{}
 	for i := 0; i <= text.len; i++ {
 		c := if i < text.len { text[i] } else { u8(` `) }
 		if (c >= `a` && c <= `z`) || (c >= `0` && c <= `9`) {
-			cur += c.ascii_str()
+			cur << c
 			continue
 		}
 		if c >= `A` && c <= `Z` {
-			cur += (c + 32).ascii_str()
+			cur << c + 32
 			continue
 		}
-		if cur != '' {
-			out[cur] = true
-			cur = ''
+		if cur.len > 0 {
+			out[cur.bytestr()] = true
+			cur = []u8{}
 		}
 	}
 	return out
@@ -289,8 +291,7 @@ pub fn (e &AttentionEconomy) enforce(sections map[string]string, result AuctionR
 		// a zero or negative limit means EVERYTHING is cut; slicing a tail
 		// of zero would otherwise hand back the whole body
 		if limit <= 0 {
-			out[name] = '\n[…trimmed by the attention auction — ' +
-				'${thousands(text.len)} chars wanted, 0 allocated]'
+			out[name] = '\n[…trimmed by the attention auction — ' + '${thousands(text.len)} chars wanted, 0 allocated]'
 			continue
 		}
 		head := int(f64(limit) * keep_head)
@@ -299,8 +300,7 @@ pub fn (e &AttentionEconomy) enforce(sections map[string]string, result AuctionR
 		if tail > 0 {
 			trimmed += '\n…\n' + text[text.len - tail..]
 		}
-		out[name] = trimmed + '\n[…trimmed by the attention auction — ' +
-			'${thousands(text.len)} chars wanted, ${thousands(limit)} allocated]'
+		out[name] = trimmed + '\n[…trimmed by the attention auction — ' + '${thousands(text.len)} chars wanted, ${thousands(limit)} allocated]'
 	}
 	return out
 }
@@ -310,16 +310,14 @@ pub fn (e &AttentionEconomy) format_last() string {
 		return 'no auction has run yet'
 	}
 	r := e.last
-	mut lines := ['ATTENTION AUCTION — budget ${thousands(r.budget)} chars, ' +
-		'used ${thousands(r.used)}']
+	mut lines := ['ATTENTION AUCTION — budget ${thousands(r.budget)} chars, ' + 'used ${thousands(r.used)}']
 	for a in r.allocations {
 		mut width := int(f64(a.limit) / f64(r.budget) * 20.0)
 		if width < 1 {
 			width = 1
 		}
 		cut := if a.trimmed { ' ✂' } else { '' }
-		lines << '  ${pad_right(a.section, 14)} bid ${a.bid:.2f} → ' +
-			'${thousands(a.limit)}${cut} ${"█".repeat(width)}'
+		lines << '  ${pad_right(a.section, 14)} bid ${a.bid:.2f} → ' + '${thousands(a.limit)}${cut} ${'█'.repeat(width)}'
 	}
 	return lines.join('\n')
 }

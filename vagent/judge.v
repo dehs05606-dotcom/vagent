@@ -313,7 +313,7 @@ fn scan_python_defs(source string) []PyDef {
 		mut params := []string{}
 		if kind == 'def' {
 			// the parameter list can span lines; collect until brackets balance
-			mut buf := ''
+			mut buf := []u8{}
 			mut depth := 0
 			mut started := false
 			for j := i; j < lines.len; j++ {
@@ -331,14 +331,14 @@ fn scan_python_defs(source string) []PyDef {
 						}
 					}
 					if started && depth >= 1 {
-						buf += ch.ascii_str()
+						buf << ch
 					}
 				}
 				if started && depth == 0 {
 					break
 				}
 			}
-			params = parse_param_names(buf)
+			params = parse_param_names(buf.bytestr())
 		}
 		out << PyDef{
 			name:   name
@@ -355,7 +355,7 @@ fn scan_python_defs(source string) []PyDef {
 fn parse_param_names(buf string) []string {
 	mut parts := []string{}
 	mut depth := 0
-	mut cur := ''
+	mut cur := []u8{}
 	for ch in buf {
 		match ch {
 			`(`, `[`, `{` { depth++ }
@@ -363,14 +363,14 @@ fn parse_param_names(buf string) []string {
 			else {}
 		}
 		if ch == `,` && depth == 0 {
-			parts << cur
-			cur = ''
+			parts << cur.bytestr()
+			cur = []u8{}
 			continue
 		}
-		cur += ch.ascii_str()
+		cur << ch
 	}
-	if cur.trim_space() != '' {
-		parts << cur
+	if cur.bytestr().trim_space() != '' {
+		parts << cur.bytestr()
 	}
 	mut names := []string{}
 	for part in parts {

@@ -23,9 +23,8 @@ import x.json2
 
 pub const semantic_dim = 256 // feature-hash width — plenty for a session corpus
 
-const semantic_stop = ['a', 'an', 'the', 'and', 'or', 'of', 'to', 'in', 'for',
-	'is', 'are', 'was', 'were', 'be', 'been', 'this', 'that', 'with', 'on',
-	'at', 'by', 'from', 'as', 'it', 'its']
+const semantic_stop = ['a', 'an', 'the', 'and', 'or', 'of', 'to', 'in', 'for', 'is', 'are', 'was',
+	'were', 'be', 'been', 'this', 'that', 'with', 'on', 'at', 'by', 'from', 'as', 'it', 'its']
 
 // ---------------------------------------------------------------------------
 // Embedding — signed feature hashing
@@ -40,22 +39,29 @@ fn token_hash(token string) (int, f64) {
 }
 
 fn semantic_tokens(text string) []string {
+	// The token accumulates into a byte buffer rather than a string.
+	// `cur += c.ascii_str()` reallocates on every character, which is
+	// quadratic in the length of a single token — invisible on prose, and
+	// minutes of CPU on a pasted minified file or a base64 blob.
 	mut out := []string{}
-	mut cur := ''
+	mut cur := []u8{}
 	for i := 0; i <= text.len; i++ {
 		c := if i < text.len { text[i] } else { u8(` `) }
 		if (c >= `a` && c <= `z`) || (c >= `0` && c <= `9`) || c == `_` {
-			cur += c.ascii_str()
+			cur << c
 			continue
 		}
 		if c >= `A` && c <= `Z` {
-			cur += (c + 32).ascii_str()
+			cur << c + 32
 			continue
 		}
-		if cur.len > 1 && cur !in semantic_stop {
-			out << cur
+		if cur.len > 1 {
+			token := cur.bytestr()
+			if token !in semantic_stop {
+				out << token
+			}
 		}
-		cur = ''
+		cur = []u8{}
 	}
 	return out
 }
@@ -119,8 +125,7 @@ pub mut:
 }
 
 fn episode_text(ep Rec) string {
-	mut parts := [jstr(ep, 'goal'), jstr(ep, 'approach'), jstr(ep, 'outcome'),
-		jstr(ep, 'lesson')]
+	mut parts := [jstr(ep, 'goal'), jstr(ep, 'approach'), jstr(ep, 'outcome'), jstr(ep, 'lesson')]
 	parts << jstrs(ep, 'facts')
 	return parts.filter(it != '').join(' ')
 }
@@ -183,7 +188,7 @@ pub fn (mut s SemanticMemory) reindex() int {
 		}
 	}
 	for d in st.dead_ends {
-		text := '${jstr(d, "signature")} ${jstr(d, "reason")}'
+		text := '${jstr(d, 'signature')} ${jstr(d, 'reason')}'
 		if text.trim_space() != '' {
 			items << MemoryItem{
 				kind:    'dead_end'

@@ -97,7 +97,10 @@ pub fn (e &Effect) to_json() map[string]json2.Any {
 // respect anything.
 pub fn shell_split(s string) ([]string, bool) {
 	mut out := []string{}
-	mut cur := ''
+	// a byte buffer, not a string: a shell command can carry a very long
+	// single argument (a heredoc body, a base64 blob), and appending to a
+	// string reallocates it on every character
+	mut cur := []u8{}
 	mut has_cur := false
 	mut quote := u8(0)
 	mut i := 0
@@ -105,7 +108,7 @@ pub fn shell_split(s string) ([]string, bool) {
 		c := s[i]
 		if quote != 0 {
 			if c == `\\` && quote == `"` && i + 1 < s.len {
-				cur += s[i + 1].ascii_str()
+				cur << s[i + 1]
 				i += 2
 				continue
 			}
@@ -114,7 +117,7 @@ pub fn shell_split(s string) ([]string, bool) {
 				i++
 				continue
 			}
-			cur += c.ascii_str()
+			cur << c
 			i++
 			continue
 		}
@@ -126,7 +129,7 @@ pub fn shell_split(s string) ([]string, bool) {
 			}
 			`\\` {
 				if i + 1 < s.len {
-					cur += s[i + 1].ascii_str()
+					cur << s[i + 1]
 					has_cur = true
 					i += 2
 				} else {
@@ -135,8 +138,8 @@ pub fn shell_split(s string) ([]string, bool) {
 			}
 			` `, `\t`, `\n`, `\r` {
 				if has_cur {
-					out << cur
-					cur = ''
+					out << cur.bytestr()
+					cur = []u8{}
 					has_cur = false
 				}
 				i++
@@ -146,11 +149,11 @@ pub fn shell_split(s string) ([]string, bool) {
 					// a comment runs to the end of the line
 					break
 				}
-				cur += c.ascii_str()
+				cur << c
 				i++
 			}
 			else {
-				cur += c.ascii_str()
+				cur << c
 				has_cur = true
 				i++
 			}
@@ -160,7 +163,7 @@ pub fn shell_split(s string) ([]string, bool) {
 		return out, false
 	}
 	if has_cur {
-		out << cur
+		out << cur.bytestr()
 	}
 	return out, true
 }
@@ -178,13 +181,15 @@ fn has_dynamic(s string) bool {
 // a new simple command.
 pub fn split_segments(command string) []string {
 	mut out := []string{}
-	mut cur := ''
+	// a byte buffer: a single segment can be a whole heredoc body, and
+	// appending to a string reallocates it on every character
+	mut cur := []u8{}
 	mut i := 0
 	mut quote := u8(0)
 	for i < command.len {
 		c := command[i]
 		if quote != 0 {
-			cur += c.ascii_str()
+			cur << c
 			if c == quote {
 				quote = 0
 			}
@@ -193,32 +198,32 @@ pub fn split_segments(command string) []string {
 		}
 		if c == `'` || c == `"` {
 			quote = c
-			cur += c.ascii_str()
+			cur << c
 			i++
 			continue
 		}
 		if c == `&` && i + 1 < command.len && command[i + 1] == `&` {
-			out << cur
-			cur = ''
+			out << cur.bytestr()
+			cur = []u8{}
 			i += 2
 			continue
 		}
 		if c == `|` && i + 1 < command.len && command[i + 1] == `|` {
-			out << cur
-			cur = ''
+			out << cur.bytestr()
+			cur = []u8{}
 			i += 2
 			continue
 		}
 		if c == `;` || c == `|` || c == `\n` {
-			out << cur
-			cur = ''
+			out << cur.bytestr()
+			cur = []u8{}
 			i++
 			continue
 		}
-		cur += c.ascii_str()
+		cur << c
 		i++
 	}
-	out << cur
+	out << cur.bytestr()
 	return out
 }
 
@@ -593,9 +598,8 @@ fn patch_effects(patch string) []Effect {
 // that limit is real, and Covenant.unnamed_tools() reports it rather than
 // letting it pass for coverage. Such a tool can still be constrained by
 // name (forbid_tool).
-pub const named_tools = ['run_command', 'bg_shell', 'shell', 'bash', 'live_shell',
-	'write_file', 'edit_file', 'create_directory', 'delete_path', 'move_path',
-	'copy_path', 'apply_patch']
+pub const named_tools = ['run_command', 'bg_shell', 'shell', 'bash', 'live_shell', 'write_file',
+	'edit_file', 'create_directory', 'delete_path', 'move_path', 'copy_path', 'apply_patch']
 
 // derive reduces one pending tool call to its effects.
 pub fn derive(tool string, args map[string]json2.Any) []Effect {
