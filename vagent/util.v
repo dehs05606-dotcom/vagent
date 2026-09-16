@@ -355,3 +355,25 @@ pub fn jf64_or(m map[string]json2.Any, key string, fallback f64) f64 {
 	}
 	return v.f64()
 }
+
+// uniq_strings keeps the first occurrence of each value, in order.
+pub fn uniq_strings(items []string) []string {
+	mut seen := map[string]bool{}
+	mut out := []string{}
+	for s in items {
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		out << s
+	}
+	return out
+}
+
+pub fn max_f64(a f64, b f64) f64 {
+	return if a > b { a } else { b }
+}
+
+pub fn min_f64(a f64, b f64) f64 {
+	return if a < b { a } else { b }
+}
