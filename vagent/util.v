@@ -323,3 +323,24 @@ pub fn thousands64(n i64) string {
 	out.prepend(digits[..i])
 	return if neg { '-' + out.join(',') } else { out.join(',') }
 }
+
+// round_to rounds to `places` decimals, which is what Python's round() does
+// for the event payloads — a percentage recorded as 83.33333333333333 makes
+// every diff of the log noisy for no gain.
+pub fn round_to(x f64, places int) f64 {
+	mut scale := 1.0
+	for _ in 0 .. places {
+		scale *= 10.0
+	}
+	return math_round(x * scale) / scale
+}
+
+fn math_round(x f64) f64 {
+	return if x < 0 { -f64(u64(-x + 0.5)) } else { f64(u64(x + 0.5)) }
+}
+
+// quote_arg wraps a value so a shell passes it through as ONE argument,
+// whatever whitespace or metacharacters it holds.
+pub fn quote_arg(s string) string {
+	return "'" + s.replace("'", "'\\''") + "'"
+}
