@@ -28,3 +28,27 @@ pub fn texts_of(evs []Event) []string {
 	}
 	return out
 }
+
+// LineCollector captures streamed tool output for assertions.
+//
+// V closures capture `mut` locals by value: state mutated inside the
+// closure persists across ITS OWN calls, but never propagates back to the
+// enclosing scope. Capturing a pointer to a heap struct is what actually
+// carries the lines out, so every streaming sink in this package — tests
+// and TUI alike — hands the closure a `&` receiver rather than a `mut`
+// local.
+@[heap]
+pub struct LineCollector {
+pub mut:
+	lines   []string
+	tagged  []string
+}
+
+pub fn (c &LineCollector) sink() OutputSink {
+	return OutputSink(fn [c] (line string, stream string) {
+		unsafe {
+			c.lines << line
+			c.tagged << '${stream}:${line}'
+		}
+	})
+}
