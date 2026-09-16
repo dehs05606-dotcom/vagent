@@ -20,6 +20,16 @@ module vagent
 // anything. Both are caught by a test rather than by the next person to
 // wonder why a safety gate never fires.
 
+// embedded_pages is every large verbatim text this package carries that is
+// NOT Python — today, the control tower's dashboard. It is checked for the
+// same corruption, because a mangled escape in a script tag is just as
+// invisible as one in a regex.
+pub fn embedded_pages() map[string]string {
+	return {
+		'tower_page': tower_page
+	}
+}
+
 // embedded_harnesses is every Python analyser this package carries, by name.
 pub fn embedded_harnesses() map[string]string {
 	return {

@@ -13,6 +13,20 @@ fn test_no_embedded_harness_carries_a_control_character() {
 	}
 }
 
+fn test_no_embedded_page_carries_a_control_character() {
+	for name, text in embedded_pages() {
+		offsets := harness_control_bytes(text)
+		assert offsets.len == 0, '${name}: control bytes at ${offsets}'
+	}
+	// and the page really is self-contained: nothing to fetch at view time
+	page := embedded_pages()['tower_page'] or { '' }
+	assert page.len > 1000
+	assert !page.contains('http://')
+	assert !page.contains('https://')
+	assert page.contains('CONTROL TOWER')
+	assert page.contains('/api/events')
+}
+
 fn test_every_embedded_harness_still_parses_as_python() {
 	python := find_python() or {
 		eprintln('harness: no python interpreter — skipping')
