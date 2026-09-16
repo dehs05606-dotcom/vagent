@@ -1,0 +1,30 @@
+module vagent
+
+import os
+
+// testsupport.v — helpers shared by the module's _test.v files.
+//
+// V compiles each _test.v file as its own program, so a helper defined in
+// one test file is not visible from another. These two live in a regular
+// module file so every test can use them.
+
+// tmp_log_path returns a fresh, empty path under the system temp dir for a
+// throwaway event log.
+pub fn tmp_log_path(name string) string {
+	dir := os.join_path(os.temp_dir(), 'vagent-selftest-${os.getpid()}')
+	os.mkdir_all(dir) or {}
+	p := os.join_path(dir, name)
+	os.rm(p) or {}
+	return p
+}
+
+// texts_of extracts the `text` field of every user.message event.
+pub fn texts_of(evs []Event) []string {
+	mut out := []string{}
+	for e in evs {
+		if e.typ == 'user.message' {
+			out << jstr(e.data, 'text')
+		}
+	}
+	return out
+}

@@ -1,0 +1,7 @@
+# V build output
+/vagent-bin
+/vagent.exe
+*.tmp.c
+/.vmodules/
+# local state
+/.fullagent/
