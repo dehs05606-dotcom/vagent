@@ -16,6 +16,10 @@ fn init() {
 		prompt_registry['master'] = master_prompt
 	}
 	calibration = &Calibration{}
+	// armed_covenant is set when a Covenant arms a registry; until then the
+	// wrapper falls through to the unguarded handler, which is the same
+	// behaviour as never having armed at all.
+	armed_covenant = unsafe { nil }
 }
 
 // os_join is os.join_path under a short name, so the const-initialisation
