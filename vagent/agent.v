@@ -133,9 +133,14 @@ pub mut:
 	turn_status   StatusSink  = unsafe { nil }
 	// distance history, for the focus mode's stall detection
 	focus_history []f64
-	notify_seq    int
-	model_errors  map[string]int
-	failovers     int
+	// how many auto-continuation turns focus mode still owes. The Python
+	// original kept this in the TUI object; it lives here so /focus can be
+	// routed and tested without a terminal, and so the turn loop and the
+	// command that arms it read the same number.
+	focus_remaining int
+	notify_seq      int
+	model_errors    map[string]int
+	failovers       int
 	// at most one failover per turn
 	failed_over    bool
 	turn_start_seq int
