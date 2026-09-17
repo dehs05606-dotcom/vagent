@@ -165,3 +165,30 @@ fn test_utf8_characters_decode_whole() {
 	k2 := d.next(false) or { panic('split rune lost') }
 	assert k2.ch == `é`
 }
+
+// -- the pinned region's erase distance -----------------------------------------
+//
+// This is the arithmetic that once ate a line of scrollback on every command
+// typed with the completion menu open. The draw parks the cursor where the
+// user is typing — NOT on the region's last row — so the erase has to climb
+// exactly as far as the draw descended. Assuming the bottom row climbs one
+// row too far whenever anything sits above the box.
+
+fn test_the_erase_climbs_exactly_as_far_as_the_draw_parked() {
+	// a bare 3-row box with the caret on the input line
+	assert park_row(3, 1) == 1
+	// the same box under a 1-row completion menu: 4 rows, caret on row 2
+	assert park_row(4, 2) == 2
+	// a picker above the box pushes the caret further down still
+	assert park_row(13, 11) == 11
+}
+
+fn test_a_park_outside_the_region_lands_on_its_last_row() {
+	// cursor_row counts LINES while the region is measured in rendered
+	// rows, so a wrapped line can ask for a row past the bottom
+	assert park_row(3, 9) == 2
+	assert park_row(1, 4) == 0
+	assert park_row(3, -1) == 0
+	// an empty region has nowhere to park
+	assert park_row(0, 0) == 0
+}

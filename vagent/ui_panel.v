@@ -195,3 +195,31 @@ pub fn banner_status(model &Model, effort &Effort, autonomy int, session_id stri
 	row << span(session_id, Style{ fg: c_fg })
 	return row
 }
+
+// banner_hints is the third line of the opening: the four things worth
+// knowing before you type anything.
+pub fn banner_hints() []Span {
+	return [
+		span('   ', Style{ fg: c_dim }),
+		span('/', Style{
+			fg:   c_green
+			bold: true
+		}),
+		span(' commands · ', Style{ fg: c_dim }),
+		span('Ctrl+T', Style{
+			fg:   c_cyan
+			bold: true
+		}),
+		span(' models · ', Style{ fg: c_dim }),
+		span('Ctrl+E', Style{
+			fg:   c_cyan
+			bold: true
+		}),
+		span(' effort · ', Style{ fg: c_dim }),
+		span('/crew', Style{
+			fg:   c_pink
+			bold: true
+		}),
+		span(' background subagents', Style{ fg: c_dim }),
+	]
+}

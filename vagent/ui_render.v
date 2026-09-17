@@ -57,12 +57,11 @@ const devin_arg = {
 	'read_file':        'path'
 }
 
-const devin_path_arg = ['list_dir', 'file_info', 'create_directory', 'delete_path',
-	'copy_path', 'move_path', 'write_file', 'edit_file', 'read_file']
+const devin_path_arg = ['list_dir', 'file_info', 'create_directory', 'delete_path', 'copy_path',
+	'move_path', 'write_file', 'edit_file', 'read_file']
 
 // live_tools render as a streamed block rather than a summary.
-const live_tools = ['run_command', 'live_shell', 'write_file', 'edit_file',
-	'read_file', 'apply_patch']
+const live_tools = ['run_command', 'live_shell', 'write_file', 'edit_file', 'read_file', 'apply_patch']
 
 pub fn is_live_tool(name string) bool {
 	return name in live_tools
@@ -399,7 +398,7 @@ pub fn live_rows(ev &ToolEvent, w int) [][]Span {
 
 	match ev.name {
 		'run_command', 'live_shell' {
-			add(mut rows, '\$ ${jstr(ev.args, "command")}', Style{
+			add(mut rows, '\$ ${jstr(ev.args, 'command')}', Style{
 				fg:   c_fg
 				bold: true
 			})
@@ -579,4 +578,41 @@ pub fn tool_result_block(ev &ToolEvent, width int) [][]Span {
 		generic_rows(ev)
 	}
 	return tree_block(rows)
+}
+
+// -- the closing lines of a live-streamed block --------------------------------
+//
+// A block that streamed its own body still needs an ending. These are that
+// ending, and they are separate from the block renderers above because the
+// body was already on screen: replaying it to draw a footer would print the
+// whole file a second time.
+
+// shell_footer closes a live-streamed shell block with the exit code, or
+// with the error if the command never got that far.
+pub fn shell_footer(ev &ToolEvent) []Span {
+	lead := fg(' └ ', c_dim)
+	if ev.status != 'done' || ev.result.starts_with('ERROR') {
+		msg := if ev.result != '' { ev.result.all_before('\n') } else { ev.status }
+		return [lead, fg(cap_at(msg, 200), c_red)]
+	}
+	parsed := parse_shell_result(ev.result)
+	if parsed.exit_code != -999 {
+		colour := if parsed.exit_code == 0 { c_green } else { c_red }
+		return [lead, fg('Exited with code ${parsed.exit_code}', colour)]
+	}
+	return [lead, fg('done', c_green)]
+}
+
+// write_footer closes a live-streamed write block with the tool's own
+// receipt — 'OK: created … 286 line(s)' — rather than a line this file
+// makes up, so what is shown is what the tool actually reported.
+pub fn write_footer(ev &ToolEvent, nlines int) []Span {
+	lead := fg(' └ ', c_dim)
+	if ev.status != 'done' || ev.result.starts_with('ERROR') {
+		msg := if ev.result != '' { ev.result.all_before('\n') } else { ev.status }
+		return [lead, fg(cap_at(msg, 200), c_red)]
+	}
+	first := if ev.result != '' { ev.result.all_before('\n') } else { '' }
+	body := if first != '' { cap_at(first, 200) } else { '${nlines} line(s) written' }
+	return [lead, fg(body, c_green)]
 }
